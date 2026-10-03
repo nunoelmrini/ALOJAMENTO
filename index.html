@@ -810,7 +810,7 @@
  <div class="header-more" id="headerMore">
    <button class="theme-toggle" id="headerMoreBtn" type="button">⋯ Mais</button>
    <div class="header-more-menu" id="headerMoreMenu">
-     <button class="theme-toggle" id="linkDriveBtn" type="button">📁 Ficheiro (sync)</button>
+     <button class="theme-toggle" id="linkDriveBtn" type="button">📁 Ficheiro local (opcional)</button>
      <button class="theme-toggle" id="exportQuickBtn" type="button">BACKUP RÁPIDO</button>
      <button class="theme-toggle" id="exportBtn" type="button">BACKUP COMPLETO</button>
      <button class="theme-toggle" id="exportCsvBtn" type="button">CSV</button>
@@ -10712,9 +10712,9 @@ collectAllOverdue=async function(){
   MONTH_KEYS.forEach((mk,k)=>{if(k>cur)return;state.rooms.forEach(rm=>{if(isRentedThisMonth(mk,rm.id,k)&&effectiveStatusRenda(mk,rm.id)==='Não Pago')rows.push({rid:rm.id,k,mk,t:state.tenants[rm.id]||{},val:Number(effectiveTotalPagar(mk,rm.id))||0});});});
   if(!rows.length){await customAlert('Sem rendas em atraso.');return;}
   const ov=document.createElement('div');ov.style.cssText='position:fixed;inset:0;z-index:99990;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center';
-  const box=document.createElement('div');box.style.cssText='background:var(--paper,#fff);color:inherit;max-width:420px;width:92%;max-height:80vh;overflow:auto;border-radius:12px;padding:16px';box.innerHTML='<h3 style="margin:0 0 10px">Cobrar em atraso ('+rows.length+')</h3>';
+  const box=document.createElement('div');box.style.cssText='background:#121826;color:#e8ecf5;max-width:420px;width:92%;max-height:80vh;overflow:auto;border-radius:12px;padding:16px';box.innerHTML='<h3 style="margin:0 0 10px">Cobrar em atraso ('+rows.length+')</h3>';
   rows.forEach(r=>{const d=document.createElement('div');d.style.cssText='display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid rgba(128,128,128,.3)';
-    d.innerHTML='<span style="font-size:13px"><b>'+escapeHTML(r.t.nome||('Quarto '+r.rid))+'</b> · '+escapeHTML(r.mk)+' · '+fmt(r.val)+'</span>';
+    const _due=year+'-'+String(r.k+1).padStart(2,'0')+'-01',_late=Math.max(0,Math.floor((Date.now()-new Date(_due))/864e5));d.innerHTML='<span style="font-size:13px;line-height:1.4"><b>'+escapeHTML(r.t.nome||('Quarto '+r.rid))+'</b> · quarto '+escapeHTML(String(r.rid))+'<br>'+escapeHTML(r.mk)+' · '+fmt(r.val)+' · vence '+fmtDate(_due)+(_late>0?' · <span style="color:#ff8a9d">'+_late+' dia(s) de atraso</span>':'')+'</span>';
     const b=document.createElement('button');b.type='button';b.className='inq-filter-btn';b.textContent='WhatsApp';b.onclick=()=>{const due=year+'-'+String(r.k+1).padStart(2,'0')+'-01',late=Math.max(0,Math.floor((Date.now()-new Date(due))/864e5));
       const ph=(r.t.fiscal&&(r.t.fiscal.whatsapp||r.t.fiscal.telefone))||r.t.telefone||'';openWhatsAppToNumber(ph,buildCobrançaMessage({rid:r.rid,nome:r.t.nome||'',kind:'renda',monthLabel:(MONTH_LABELS[r.k]||r.mk),val:r.val,due,daysLate:late}));};d.appendChild(b);box.appendChild(d);});
   const c=document.createElement('button');c.type='button';c.className='inq-filter-btn';c.style.marginTop='12px';c.textContent='Fechar';c.onclick=()=>ov.remove();box.appendChild(c);ov.appendChild(box);ov.onclick=e=>{if(e.target===ov)ov.remove();};document.body.appendChild(ov);
@@ -10742,8 +10742,10 @@ let uid=null,applying=false,timer=null,unsub=null,asking=false;
 const ref=()=>db.collection('users').doc(uid).collection('data').doc('main');
 const rawOf=d=>d.payload||(d.store?JSON.stringify(d.store):null);
 const ask=(m,t)=>typeof customConfirm==='function'?customConfirm(m,t):Promise.resolve(confirm(m));
-const badge=document.createElement('button');badge.type='button';badge.style.cssText='position:fixed;bottom:8px;left:8px;z-index:9998;font-size:11px;padding:6px 10px;border-radius:6px;border:1px solid #2a3550;background:#121826;color:#cfd6e6;cursor:pointer';document.body.appendChild(badge);
-const setBadge=t=>{badge.textContent=t||'☁ Entrar';};setBadge('☁ …');
+const badge=document.createElement('button');badge.type='button';badge.style.cssText='margin-left:6px;font-size:12px;padding:6px 10px;border-radius:8px;border:0;cursor:pointer;font-weight:600';{const sv=document.getElementById('savePainelBtn');if(sv&&sv.parentNode)sv.parentNode.insertBefore(badge,sv.nextSibling);else{badge.style.cssText+=';position:fixed;bottom:8px;left:8px;z-index:9998';document.body.appendChild(badge);}}
+const COL={ok:['#1f8a5b','#fff'],busy:['#d99a1c','#111'],err:['#d24a4a','#fff'],off:['#3a4256','#cfd6e6']};
+const setBadge=(t,k)=>{k=k||(/^☁ (Sincronizado|Gravado)/.test(t)?'ok':/^⚠/.test(t)?'err':/(guardar|sincronizar)/i.test(t)?'busy':'off');badge.textContent=t;badge.style.background=COL[k][0];badge.style.color=COL[k][1];badge.title='Nuvem: verde = gravado na Firebase · amarelo = a gravar · vermelho = falhou · cinzento = sem sessão. Clica para opções.';};
+const okBadge=()=>{const d=new Date();LS('fb_last_ok',d.toISOString());setBadge('☁ Gravado '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'));};setBadge('☁ …','off');
 const gate=document.createElement('div');gate.style.cssText='display:none;position:fixed;inset:0;z-index:99999;background:#0a0e17;align-items:center;justify-content:center;font-family:system-ui,sans-serif;color:#e8ecf5';
 const inp='width:100%;box-sizing:border-box;padding:10px;margin-bottom:8px;border-radius:8px;border:1px solid #2a3550;background:#0a0e17;color:#fff',bt='width:100%;padding:11px;border:0;border-radius:8px;font-weight:700;cursor:pointer;margin-top:8px';
 gate.innerHTML='<div style="max-width:360px;width:90%;padding:28px;border:1px solid #2a3550;border-radius:12px;background:#121826"><h2 style="margin:0 0 8px;font-size:1.2rem">Livro da Casa</h2><p style="margin:0 0 16px;font-size:13px;opacity:.75">Inicia sessão para sincronizar na nuvem.</p><button type="button" id="fbG" style="'+bt+';background:#fff;color:#111;margin-top:0">Entrar com Google</button><input id="fbE" type="email" placeholder="E-mail" style="'+inp+';margin-top:10px"><input id="fbP" type="password" placeholder="Palavra-passe (mín. 6)" style="'+inp+'"><button type="button" id="fbL" style="'+bt+';background:#35D4FF;color:#0a0e17">Entrar</button><button type="button" id="fbC" style="'+bt+';background:transparent;border:1px solid #2a3550;color:#8a94a8;font-weight:500">Criar conta nova</button><p id="fbErr" style="color:#ff6b8a;font-size:12px;margin:10px 0 0;min-height:1.2em"></p><button type="button" id="fbS" style="'+bt+';background:transparent;border:1px solid #2a3550;color:#8a94a8;font-weight:500">Continuar sem nuvem</button></div>';
@@ -10753,13 +10755,25 @@ $('fbG').onclick=async()=>{try{$('fbErr').textContent='';await auth.signInWithPo
 $('fbL').onclick=async()=>{try{$('fbErr').textContent='';await auth.signInWithEmailAndPassword($('fbE').value.trim(),$('fbP').value);}catch(e){err(e);}};
 $('fbC').onclick=async()=>{try{$('fbErr').textContent='';if($('fbP').value.length<6){$('fbErr').textContent='Palavra-passe: mínimo 6 caracteres.';return;}await auth.createUserWithEmailAndPassword($('fbE').value.trim(),$('fbP').value);}catch(e){err(e);}};
 $('fbS').onclick=()=>{LS('fb_skip','1');gate.style.display='none';};
-badge.onclick=async()=>{if(uid){if(await ask('Terminar sessão na nuvem? Os dados ficam guardados neste dispositivo.','Sair'))auth.signOut();}else{LS('fb_skip','');gate.style.display='flex';}};
+async function dailyBackup(raw,rev){try{if(!uid||!raw)return;const day=new Date().toISOString().slice(0,10);if(LS('fb_bk_'+uid)===day)return;const col=db.collection('users').doc(uid).collection('backups');await col.doc(day).set({payload:raw,rev:rev||'',at:new Date().toISOString(),device:dev});LS('fb_bk_'+uid,day);const all=await col.get(),ids=[];all.forEach(d=>ids.push(d.id));ids.sort();while(ids.length>30){await col.doc(ids.shift()).delete();}}catch(e){console.warn('backup nuvem',e);}}
+async function restoreCloudBackup(){const col=db.collection('users').doc(uid).collection('backups'),all=await col.get(),ids=[];all.forEach(d=>ids.push(d.id));ids.sort();if(!ids.length){await customAlert('Ainda não há cópias diárias na nuvem.');return;}
+  const v=await customPromptDialog('Cópias na nuvem:\n'+ids.slice(-15).join(', ')+'\nData a restaurar (AAAA-MM-DD):',ids[ids.length-1],'Restaurar da nuvem');if(!v)return;const sn=await col.doc(String(v).trim()).get();if(!sn.exists){await customAlert('Cópia não encontrada.');return;}
+  if(!await ask('Substituir TODOS os dados (neste e nos outros dispositivos) pela cópia de '+v+'? É guardada antes uma cópia local.','Restaurar'))return;
+  const d=sn.data(),rev=Date.now()+'-'+dev;await ref().set({payload:d.payload,rev,updatedAt:new Date().toISOString(),device:dev});await applyRemote({payload:d.payload,rev});}
+async function verifyCloud(){const sn=await ref().get();if(!sn.exists){await customAlert('Ainda não há dados na nuvem.');return;}const d=sn.data(),same=LS('fb_seen_'+uid)===(d.rev||'legacy');
+  await customAlert('✓ A nuvem (Firebase) tem dados.\nÚltima gravação: '+(d.updatedAt?new Date(d.updatedAt).toLocaleString('pt-PT'):'—')+'\nDispositivo que gravou: '+(d.device||'?')+'\nEste dispositivo está '+(same?'IGUAL à nuvem':'DIFERENTE da nuvem')+'\nTamanho: '+Math.round((rawOf(d)||'').length/1024)+' KB','Verificar nuvem');}
+function overdueCount(){const cur=currentRealMonthIndex();let n=0;MONTH_KEYS.forEach((mk,k)=>{if(k>cur)return;state.rooms.forEach(r=>{if(isRentedThisMonth(mk,r.id,k)&&effectiveStatusRenda(mk,r.id)==='Não Pago')n++;});});return n;}
+function checkOverdueNotify(){try{if(!('Notification' in window)||Notification.permission!=='granted')return;const day=new Date().toISOString().slice(0,10);if(LS('fb_notif_day')===day)return;const n=overdueCount();if(n>0)new Notification('Livro da Casa',{body:n+' renda(s) em atraso'});LS('fb_notif_day',day);}catch(e){}}
+setInterval(checkOverdueNotify,3600000);
+badge.onclick=async()=>{if(!uid){LS('fb_skip','');gate.style.display='flex';return;}
+  const v=await customPromptDialog('1 = Verificar gravação na nuvem\n2 = Restaurar cópia diária da nuvem\n3 = Ativar avisos de rendas em atraso\n4 = Terminar sessão','1','Nuvem');
+  try{if(v==='1')await verifyCloud();else if(v==='2')await restoreCloudBackup();else if(v==='3'){if(!('Notification' in window))await customAlert('Este navegador não suporta notificações.');else if(await Notification.requestPermission()==='granted'){LS('fb_notif_day','');checkOverdueNotify();await customAlert('Avisos ativados: recebes um aviso por dia, com a app aberta, se houver rendas em atraso.');}}else if(v==='4'&&await ask('Terminar sessão na nuvem? Os dados ficam neste dispositivo.','Sair'))auth.signOut();}catch(e){await customAlert('Erro: '+(e.message||e));}};
 async function applyRemote(d){const raw=rawOf(d);try{const j=JSON.parse(raw);if(!j||!j.properties)throw 0;}catch(e){alert('Dados da nuvem inválidos — nada foi alterado.');return false;}
   applying=true;try{await autoSnapshot();}catch(e){}await idbSet(IDB_KEY_MAIN,raw);try{localStorage.setItem(STORE_KEY,raw);}catch(e){}
   LS('fb_seen_'+uid,d.rev||'legacy');LS('fb_dirty_'+uid,'0');(window.__cloudReload||(()=>location.reload()))();return true;}
 async function push(){if(!uid||applying)return;const raw=snapNow();if(!raw)return;if(raw.length>900000){setBadge('⚠ Dados grandes demais');return;}
   const rev=Date.now()+'-'+dev,prev=LS('fb_seen_'+uid)||'';LS('fb_seen_'+uid,rev);
-  try{await ref().set({payload:raw,rev,updatedAt:new Date().toISOString(),device:dev});LS('fb_dirty_'+uid,'0');setBadge('☁ Sincronizado');}catch(e){LS('fb_seen_'+uid,prev);setBadge('⚠ Sem ligação');console.warn('push',e);}}
+  try{await ref().set({payload:raw,rev,updatedAt:new Date().toISOString(),device:dev});LS('fb_dirty_'+uid,'0');okBadge();dailyBackup(raw,rev);}catch(e){LS('fb_seen_'+uid,prev);setBadge('⚠ Sem ligação');console.warn('push',e);}}
 function schedulePush(){if(!uid)return;LS('fb_dirty_'+uid,'1');setBadge('☁ A guardar…');clearTimeout(timer);timer=setTimeout(push,2000);}
 async function reconcile(){const snap=await ref().get(),seen=LS('fb_seen_'+uid),dirty=LS('fb_dirty_'+uid)==='1';
   if(!snap.exists){await push();return 'pushed-first';}
@@ -10773,7 +10787,7 @@ function listen(){if(unsub)unsub();unsub=ref().onSnapshot(s=>{if(!s.exists||(s.m
 auth.onAuthStateChanged(async u=>{
   if(!u){uid=null;if(unsub){unsub();unsub=null;}setBadge('☁ Entrar');if(!LS('fb_skip'))gate.style.display='flex';return;}
   uid=u.uid;gate.style.display='none';setBadge('☁ A sincronizar…');
-  try{const r=await reconcile();window.__cloudLast=r;if(!applying){setBadge('☁ Sincronizado');listen();}}catch(e){setBadge('⚠ Sem ligação');console.warn('reconcile',e);}});
+  try{const r=await reconcile();window.__cloudLast=r;if(!applying){okBadge();listen();dailyBackup(snapNow(),LS('fb_seen_'+uid));checkOverdueNotify();}}catch(e){setBadge('⚠ Sem ligação');console.warn('reconcile',e);}});
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&timer){clearTimeout(timer);timer=null;push();}});
 const _s=saveState;saveState=async function(...a){const r=await _s.apply(this,a);if(r!==false)schedulePush();return r;};
 })();
