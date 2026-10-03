@@ -5779,7 +5779,7 @@ function getMonthlyLedgerTotals(propertyId=store.currentId,year=Number(state.man
    const month=Number(String(r.date||'').slice(5,7))-1;
    if(month<0||month>11)return;
    const amt=Number(r.amount)||0;
-   if(r.type==='income'&&String(r.category||'')==='Caução'){deposits[month]+=amt;return;}
+   if(r.type==='income'&&String(r.category||'')==='Caução'){const _d=((state.tenants[r.roomId]||{}).caucaoDestino)||'pendente';if(_d==='pendente'){deposits[month]+=amt;return;}if(_d==='devolvida')return;}
    if(r.type==='income'){
      income[month]+=amt;
      if(String(r.category||'')==='Recuperação de despesas') recovered[month]+=amt;
@@ -10490,7 +10490,7 @@ function applyBulkRentUpdate(pct){
   const f=1+Number(pct)/100,fromIdx=currentMonthIndex();let n=0;
   try{localStorage.setItem('livroDaCasa_preBulk_v1',JSON.stringify(state));}catch(e){}
   Object.keys(state.tenants).forEach(rid=>{const t=state.tenants[rid];if(!t||!(Number(t.renda)>0)||currentAutoStatus(rid)==='vago')return;
-    t.renda=Math.round(t.renda*f*100)/100;
+    t.renda=Math.round(t.renda*f*100)/100;(t.rentHistory=t.rentHistory||[]).push({date:todayISO(),amount:t.renda,note:'Atualização em lote '+pct+'%'});
     MONTH_KEYS.forEach((mk,i)=>{if(i>=fromIdx&&isRentedThisMonth(mk,rid,i)&&effectiveStatusRenda(mk,rid)!=='Pago')state.monthlyRents[ovKey(mk,rid)]=t.renda;});n++;});
   return n;
 }
@@ -10524,7 +10524,7 @@ async function autoSnapshot(){
   try{store.properties[store.currentId].data=state;const d=todayISO(),idx=(await idbGet('livroDaCasa_auto_index'))||[];
     if(!idx.includes(d)){await idbSet('livroDaCasa_auto_'+d,JSON.stringify(store));idx.push(d);}
     else await idbSet('livroDaCasa_auto_'+d,JSON.stringify(store));
-    idx.sort();while(idx.length>7){const o=idx.shift();await idbSet('livroDaCasa_auto_'+o,'');}
+    idx.sort();while(idx.length>3){const o=idx.shift();await idbSet('livroDaCasa_auto_'+o,'');}
     await idbSet('livroDaCasa_auto_index',idx);}catch(e){console.warn('autoSnapshot',e);}
 }
 async function restoreAutoSnapshot(){
@@ -10617,7 +10617,7 @@ async function collectAllOverdue(){
 }
 function selfTests(){
   const r=[];state.rooms;MONTH_KEYS.forEach((mk,i)=>['baixo','cima'].forEach(h=>{const ids=state.rooms.filter(x=>x.house===h).map(x=>x.id),bill=houseUtilityTotal(mk,h),a=ids.reduce((s,x)=>s+(Number(autoExpenseAlloc(mk,x))||0),0);
-    if(bill>0&&Math.abs(a-bill)>0.05)r.push('Rateio '+mk+' casa '+h+': fatura '+bill.toFixed(2)+' ≠ alocado '+a.toFixed(2));}));
+    if(bill>0&&Math.abs(a-bill)>0.05&&ids.some(x=>isRentedThisMonth(mk,x,i)))r.push('Rateio '+mk+' casa '+h+': fatura '+bill.toFixed(2)+' ≠ alocado '+a.toFixed(2));}));
   MONTH_KEYS.forEach((mk,i)=>state.rooms.forEach(x=>{const d=Number(effectiveTotalPagar(mk,x.id))||0;if(d<0)r.push('Renda negativa '+mk+'::'+x.id);if(isRentedThisMonth(mk,x.id,i)&&d===0&&!(state.tenants[x.id]&&state.tenants[x.id].renda===0))r.push('Renda 0 em mês ocupado '+mk+'::'+x.id);}));
   return r;
 }
@@ -10697,6 +10697,28 @@ function decorateHojeLayout(){
 }
 {const _p=renderHojeTab;renderHojeTab=function(){_p();try{decorateHojeLayout();}catch(e){console.warn(e);}};}
 {const _c=renderCobrancasPorInquilino;renderCobrancasPorInquilino=function(){_c.apply(this,arguments);try{decorateHojeLayout();}catch(e){console.warn(e);}};}
+
+/* ===== Histórico: criar lançamentos de renda em falta (estado Pago + contrato ativo) ===== */
+async function backfillPaidRentTx(){
+  if(state.backfillPaidRentV1)return 0;const year=Number(state.managementYear)||2026,cur=currentRealMonthIndex(),tx=state.transactions||[],add=[];
+  MONTH_KEYS.forEach((mk,i)=>{if(i>cur)return;state.rooms.forEach(r=>{if(effectiveStatusRenda(mk,r.id)!=='Pago'||!isRentedThisMonth(mk,r.id,i))return;const ym=year+'-'+String(i+1).padStart(2,'0');
+    if(tx.some(t=>t.type==='income'&&t.category==='Renda'&&String(t.roomId)===String(r.id)&&String(t.date).slice(0,7)===ym))return;const v=Number(effectiveTotalPagar(mk,r.id))||0;if(v>0)add.push({id:featureId('tx'),date:ym+'-01',type:'income',roomId:String(r.id),category:'Renda',amount:v,method:'Histórico (estado Pago)',notes:'Criado automaticamente: mês marcado como pago com contrato ativo',propertyId:store.currentId,source:'backfill'});});});
+  try{await autoSnapshot();}catch(e){}state.transactions=tx.concat(add);state.backfillPaidRentV1=true;await saveState();return add.length;
+}
+setTimeout(async()=>{try{const n=await backfillPaidRentTx();if(n)await customAlert(n+' lançamento(s) de renda em falta foram criados a partir dos meses já marcados como pagos (contratos ativos). Foi guardada uma cópia antes; podes desfazer em "Alterações".','Histórico sincronizado');}catch(e){console.warn('backfill',e);}},8000);
+/* ===== Cobrar em atraso: lista com WhatsApp por inquilino ===== */
+collectAllOverdue=async function(){
+  const year=Number(state.managementYear)||2026,cur=currentRealMonthIndex(),rows=[];
+  MONTH_KEYS.forEach((mk,k)=>{if(k>cur)return;state.rooms.forEach(rm=>{if(isRentedThisMonth(mk,rm.id,k)&&effectiveStatusRenda(mk,rm.id)==='Não Pago')rows.push({rid:rm.id,k,mk,t:state.tenants[rm.id]||{},val:Number(effectiveTotalPagar(mk,rm.id))||0});});});
+  if(!rows.length){await customAlert('Sem rendas em atraso.');return;}
+  const ov=document.createElement('div');ov.style.cssText='position:fixed;inset:0;z-index:99990;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center';
+  const box=document.createElement('div');box.style.cssText='background:var(--paper,#fff);color:inherit;max-width:420px;width:92%;max-height:80vh;overflow:auto;border-radius:12px;padding:16px';box.innerHTML='<h3 style="margin:0 0 10px">Cobrar em atraso ('+rows.length+')</h3>';
+  rows.forEach(r=>{const d=document.createElement('div');d.style.cssText='display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid rgba(128,128,128,.3)';
+    d.innerHTML='<span style="font-size:13px"><b>'+escapeHTML(r.t.nome||('Quarto '+r.rid))+'</b> · '+escapeHTML(r.mk)+' · '+fmt(r.val)+'</span>';
+    const b=document.createElement('button');b.type='button';b.className='inq-filter-btn';b.textContent='WhatsApp';b.onclick=()=>{const due=year+'-'+String(r.k+1).padStart(2,'0')+'-01',late=Math.max(0,Math.floor((Date.now()-new Date(due))/864e5));
+      const ph=(r.t.fiscal&&(r.t.fiscal.whatsapp||r.t.fiscal.telefone))||r.t.telefone||'';openWhatsAppToNumber(ph,buildCobrançaMessage({rid:r.rid,nome:r.t.nome||'',kind:'renda',monthLabel:(MONTH_LABELS[r.k]||r.mk),val:r.val,due,daysLate:late}));};d.appendChild(b);box.appendChild(d);});
+  const c=document.createElement('button');c.type='button';c.className='inq-filter-btn';c.style.marginTop='12px';c.textContent='Fechar';c.onclick=()=>ov.remove();box.appendChild(c);ov.appendChild(box);ov.onclick=e=>{if(e.target===ov)ov.remove();};document.body.appendChild(ov);
+};
 </script>
 <nav class="bottom-nav" id="bottomNav" aria-label="Navegação principal">
   <button type="button" data-tab="hoje" class="active"><span>◎</span>Hoje</button>
@@ -10752,6 +10774,7 @@ auth.onAuthStateChanged(async u=>{
   if(!u){uid=null;if(unsub){unsub();unsub=null;}setBadge('☁ Entrar');if(!LS('fb_skip'))gate.style.display='flex';return;}
   uid=u.uid;gate.style.display='none';setBadge('☁ A sincronizar…');
   try{const r=await reconcile();window.__cloudLast=r;if(!applying){setBadge('☁ Sincronizado');listen();}}catch(e){setBadge('⚠ Sem ligação');console.warn('reconcile',e);}});
+document.addEventListener('visibilitychange',()=>{if(document.hidden&&timer){clearTimeout(timer);timer=null;push();}});
 const _s=saveState;saveState=async function(...a){const r=await _s.apply(this,a);if(r!==false)schedulePush();return r;};
 })();
 </script>
