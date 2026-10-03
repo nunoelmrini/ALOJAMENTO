@@ -787,6 +787,50 @@
 }
 
 </style>
+
+
+<!-- ========================================== -->
+<!-- FIREBASE SDK & CONFIGURAÇÃO EM TEMPO REAL  -->
+<!-- ========================================== -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+  import { getFirestore, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+  import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyCwULDIMegxK5qpk7KN3x4jvwbdwN8HSWw",
+    authDomain: "alojamentovalenca-66035.firebaseapp.com",
+    projectId: "alojamentovalenca-66035",
+    storageBucket: "alojamentovalenca-66035.firebasestorage.app",
+    messagingSenderId: "401234375880",
+    appId: "1:401234375880:web:b41eb60bc1c0cd791ee1fd",
+    measurementId: "G-L7BR05SM36"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+  const auth = getAuth(app);
+
+  signInAnonymously(auth).then(() => {
+    console.log("Firebase autenticado com sucesso.");
+    const btn = document.getElementById("firebaseStatusBtn");
+    if (btn) {
+      btn.textContent = "☁️ Firebase: Sincronizado";
+      btn.classList.add("drive-active");
+    }
+  }).catch((error) => {
+    console.error("Erro na autenticação anónima da Firebase:", error);
+  });
+
+  // Expor utilitários globalmente para o script principal
+  window.firebaseDB = db;
+  window.FirebaseFirestore = { doc, setDoc, getDoc, onSnapshot };
+</script>
+
+
+
+
+
 </head>
 <body>
 <div class="unsaved-banner" id="unsavedBanner" role="status" aria-live="polite">
@@ -796,6 +840,9 @@
 <div class="wrap">
 
  <header class="top">
+
+
+
  <div class="brand-mark">
  <span class="num">R.</span>
  <div>
@@ -805,6 +852,9 @@
  </div>
  <div class="header-actions">
  <button class="theme-toggle" id="backupModalBtn">📦 BACKUPS</button>
+<button id="firebaseStatusBtn" class="theme-toggle" title="Estado da Sincronização Firebase">
+  🔄 Firebase: A ligar...
+</button>
  <button class="btn small" id="savePainelBtn" type="button" title="Grava todos os dados neste navegador">💾 Guardar</button>
  <span class="save-sync-indicator" id="saveSyncIndicator" data-state="ok" role="status" aria-live="polite" title="Estado da cópia local e do ficheiro selecionado">Local guardado · ficheiro não ligado</span>
  <div class="header-more" id="headerMore">
@@ -10698,6 +10748,132 @@ function decorateHojeLayout(){
 {const _p=renderHojeTab;renderHojeTab=function(){_p();try{decorateHojeLayout();}catch(e){console.warn(e);}};}
 {const _c=renderCobrancasPorInquilino;renderCobrancasPorInquilino=function(){_c.apply(this,arguments);try{decorateHojeLayout();}catch(e){console.warn(e);}};}
 </script>
+
+
+// Cole aqui as funções da Firebase:
+
+    async function saveToFirebase(storeData) {
+      if (!window.firebaseDB || !window.FirebaseFirestore) return;
+      try {
+        const { doc, setDoc } = window.FirebaseFirestore;
+        await setDoc(doc(window.firebaseDB, "imoveis", "valenca_principal"), {
+          updatedAt: new Date().toISOString(),
+          payload: storeData
+        });
+      } catch (err) {
+        console.error("Erro ao escrever dados na Firebase:", err);
+      }
+    }
+
+    function initFirebaseRealtimeSync(applyRemoteDataCallback) {
+      if (!window.firebaseDB || !window.FirebaseFirestore) {
+        setTimeout(() => initFirebaseRealtimeSync(applyRemoteDataCallback), 1000);
+        return;
+      }
+      const { doc, onSnapshot } = window.FirebaseFirestore;
+      onSnapshot(doc(window.firebaseDB, "imoveis", "valenca_principal"), (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          if (data && data.payload) {
+            applyRemoteDataCallback(data.payload);
+          }
+        }
+      }, (error) => {
+        console.error("Erro no listener da Firebase:", error);
+      });
+    }
+
+  </script>
+
+
+
+
+// (Todo o código gigante da sua aplicação acaba aqui...)
+    
+    guardarDadosLocais();
+  }
+
+  // === COLE AQUI AS FUNÇÕES DA FIREBASE (NO FIM DO SCRIPT) ===
+
+  async function saveToFirebase(storeData) {
+    if (!window.firebaseDB || !window.FirebaseFirestore) return;
+    try {
+      const { doc, setDoc } = window.FirebaseFirestore;
+      await setDoc(doc(window.firebaseDB, "imoveis", "valenca_principal"), {
+        updatedAt: new Date().toISOString(),
+        payload: storeData
+      });
+    } catch (err) {
+      console.error("Erro ao escrever dados na Firebase:", err);
+    }
+  }
+
+  function initFirebaseRealtimeSync(applyRemoteDataCallback) {
+    if (!window.firebaseDB || !window.FirebaseFirestore) {
+      setTimeout(() => initFirebaseRealtimeSync(applyRemoteDataCallback), 1000);
+      return;
+    }
+    const { doc, onSnapshot } = window.FirebaseFirestore;
+    onSnapshot(doc(window.firebaseDB, "imoveis", "valenca_principal"), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data && data.payload) {
+          applyRemoteDataCallback(data.payload);
+        }
+      }
+    }, (error) => {
+      console.error("Erro no listener da Firebase:", error);
+    });
+  }
+
+</script> <!-- Esta é a última tag de fecho do script do seu ficheiro -->
+// --- FUNÇÕES DA FIREBASE ---
+    async function saveToFirebase(storeData) {
+      if (!window.firebaseDB || !window.FirebaseFirestore) return;
+      try {
+        const { doc, setDoc } = window.FirebaseFirestore;
+        await setDoc(doc(window.firebaseDB, "imoveis", "valenca_principal"), {
+          updatedAt: new Date().toISOString(),
+          payload: storeData
+        });
+      } catch (err) {
+        console.error("Erro ao escrever dados na Firebase:", err);
+      }
+    }
+
+    function initFirebaseRealtimeSync(applyRemoteDataCallback) {
+      if (!window.firebaseDB || !window.FirebaseFirestore) {
+        setTimeout(() => initFirebaseRealtimeSync(applyRemoteDataCallback), 1000);
+        return;
+      }
+      const { doc, onSnapshot } = window.FirebaseFirestore;
+      onSnapshot(doc(window.firebaseDB, "imoveis", "valenca_principal"), (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          if (data && data.payload) {
+            applyRemoteDataCallback(data.payload);
+          }
+        }
+      }, (error) => {
+        console.error("Erro no listener da Firebase:", error);
+      });
+    }
+
+    // --- ATIVAÇÃO AUTOMÁTICA (COLE ISTO TAMBÉM AQUI) ---
+    // Isto diz à app para arrancar a escutar a Firebase e atualizar o ecrã automaticamente
+    initFirebaseRealtimeSync(function(remoteData) {
+      if (typeof store !== 'undefined') {
+        store = remoteData;
+        if (typeof renderApp === 'function') renderApp();
+        else if (typeof render === 'function') render();
+        else if (typeof atualizarEcra === 'function') atualizarEcra();
+      }
+    });
+
+  </script>
+
+
+
 <nav class="bottom-nav" id="bottomNav" aria-label="Navegação principal">
   <button type="button" data-tab="hoje" class="active"><span>◎</span>Hoje</button>
   <button type="button" data-tab="painel"><span>▦</span>Painel</button>
