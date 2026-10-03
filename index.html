@@ -796,7 +796,7 @@
   import { getFirestore, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
   import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
-  const firebaseConfig = {
+const firebaseConfig = {
     apiKey: "AIzaSyCwULDIMegxK5qpk7KN3x4jvwbdwN8HSWw",
     authDomain: "alojamentovalenca-66035.firebaseapp.com",
     projectId: "alojamentovalenca-66035",
@@ -808,30 +808,12 @@
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
-const auth = getAuth(app);
 
-function atualizarBotaoFirebase() {
-  const btn = document.getElementById("firebaseStatusBtn");
-  if (btn) {
-    btn.textContent = "☁️ Firebase: Sincronizado";
-    btn.classList.add("drive-active");
-  }
+const btn = document.getElementById("firebaseStatusBtn");
+if (btn) {
+  btn.textContent = "☁️ Firebase: Pronto";
+  btn.classList.add("drive-active");
 }
-
-auth.authStateReady().then(() => {
-  if (auth.currentUser) {
-    console.log("Sessão já existente:", auth.currentUser.uid);
-    atualizarBotaoFirebase();
-  } else {
-    signInAnonymously(auth).then(() => {
-      console.log("Firebase autenticado com sucesso.");
-      atualizarBotaoFirebase();
-    }).catch((error) => {
-      console.error("Erro na autenticação anónima da Firebase:", error);
-    });
-  }
-});
-
  
   // Expor utilitários globalmente para o script principal
   window.firebaseDB = db;
