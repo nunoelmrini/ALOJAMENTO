@@ -10881,5 +10881,151 @@ function decorateHojeLayout(){
   <button type="button" data-tab="despesas"><span>€</span>Caixa</button>
   <button type="button" data-tab="mais"><span>⋯</span>Mais</button>
 </nav>
+
+<!-- Firebase SDK + nuvem Livro da Casa -->
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script>
+(function () {
+  const firebaseConfig = {
+    apiKey: "AIzaSyCwULDIMegxK5qpk7KN3x4jvwbdwN8HSWw",
+    authDomain: "alojamentovalenca-66035.firebaseapp.com",
+    projectId: "alojamentovalenca-66035",
+    storageBucket: "alojamentovalenca-66035.firebasestorage.app",
+    messagingSenderId: "401234375880",
+    appId: "1:401234375880:web:b41eb60bc1c0cd791ee1fd",
+    measurementId: "G-L7BR05SM36"
+  };
+  firebase.initializeApp(firebaseConfig);
+  const auth = firebase.auth();
+  const db = firebase.firestore();
+
+  // Ecrã de login simples
+  const gate = document.createElement('div');
+  gate.id = 'fbAuthGate';
+  gate.style.cssText = 'position:fixed;inset:0;z-index:99999;background:#0a0e17;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;color:#e8eef8;';
+  gate.innerHTML = `
+    <div style="max-width:360px;width:90%;padding:28px;border:1px solid #2a3550;border-radius:12px;background:#121826;">
+      <h2 style="margin:0 0 8px;font-size:1.25rem;">Livro da Casa</h2>
+      <p style="margin:0 0 18px;font-size:13px;opacity:.75;">Inicia sessão para sincronizar os dados na nuvem.</p>
+      <button type="button" id="fbGoogleBtn" style="width:100%;padding:12px;border:none;border-radius:8px;background:#fff;color:#111;font-weight:600;cursor:pointer;margin-bottom:10px;">Entrar com Google</button>
+      <div style="font-size:12px;opacity:.6;text-align:center;margin:10px 0;">ou e-mail</div>
+      <input id="fbEmail" type="email" placeholder="E-mail" style="width:100%;padding:10px;margin-bottom:8px;border-radius:8px;border:1px solid #2a3550;background:#0a0e17;color:#fff;box-sizing:border-box;">
+      <input id="fbPass" type="password" placeholder="Palavra-passe" style="width:100%;padding:10px;margin-bottom:8px;border-radius:8px;border:1px solid #2a3550;background:#0a0e17;color:#fff;box-sizing:border-box;">
+      <button type="button" id="fbEmailBtn" style="width:100%;padding:12px;border:none;border-radius:8px;background:#35D4FF;color:#0a0e17;font-weight:700;cursor:pointer;">Entrar / Registar</button>
+      <p id="fbAuthErr" style="color:#ff6b8a;font-size:12px;margin:10px 0 0;min-height:1.2em;"></p>
+      <button type="button" id="fbSkipBtn" style="width:100%;margin-top:12px;padding:8px;background:transparent;border:1px solid #2a3550;color:#8a94a8;border-radius:8px;cursor:pointer;font-size:12px;">Continuar só neste dispositivo (sem nuvem)</button>
+    </div>`;
+  document.body.appendChild(gate);
+
+  const errEl = () => document.getElementById('fbAuthErr');
+  document.getElementById('fbGoogleBtn').onclick = async () => {
+    try {
+      errEl().textContent = '';
+      await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+    } catch (e) { errEl().textContent = e.message || String(e); }
+  };
+  document.getElementById('fbEmailBtn').onclick = async () => {
+    const email = document.getElementById('fbEmail').value.trim();
+    const pass = document.getElementById('fbPass').value;
+    if (!email || pass.length < 6) { errEl().textContent = 'E-mail e palavra-passe (mín. 6 caracteres).'; return; }
+    try {
+      errEl().textContent = '';
+      try { await auth.signInWithEmailAndPassword(email, pass); }
+      catch (e) {
+        if (e.code === 'auth/user-not-found' || e.code === 'auth/invalid-credential') {
+          await auth.createUserWithEmailAndPassword(email, pass);
+        } else throw e;
+      }
+    } catch (e) { errEl().textContent = e.message || String(e); }
+  };
+  document.getElementById('fbSkipBtn').onclick = () => { gate.style.display = 'none'; };
+
+  async function cloudDocRef(uid) {
+    return db.collection('users').doc(uid).collection('data').doc('main');
+  }
+
+  async function pullFromCloud(uid) {
+    try {
+      const snap = await (await cloudDocRef(uid)).get();
+      if (!snap.exists) return null;
+      return snap.data();
+    } catch (e) {
+      console.warn('Firestore pull', e);
+      return null;
+    }
+  }
+
+  async function pushToCloud(uid) {
+    try {
+      if (typeof store === 'undefined' || !store) return;
+      await (await cloudDocRef(uid)).set({
+        store: JSON.parse(JSON.stringify(store)),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      console.log('[nuvem] dados gravados');
+    } catch (e) {
+      console.warn('Firestore push', e);
+      alert('Não foi possível gravar na nuvem: ' + (e.message || e));
+    }
+  }
+
+  window.__fbPushCloud = async function () {
+    const u = auth.currentUser;
+    if (u) await pushToCloud(u.uid);
+  };
+
+  auth.onAuthStateChanged(async (user) => {
+    if (!user) {
+      gate.style.display = 'flex';
+      return;
+    }
+    gate.style.display = 'none';
+    // Carregar da nuvem se existir
+    const remote = await pullFromCloud(user.uid);
+    if (remote && remote.store) {
+      try {
+        if (typeof store !== 'undefined') {
+          // Substitui o store local pelo da nuvem
+          Object.keys(store).forEach(k => delete store[k]);
+          Object.assign(store, remote.store);
+          if (typeof state !== 'undefined' && store.properties && store.currentId) {
+            state = store.properties[store.currentId].data;
+          }
+          if (typeof saveState === 'function') await saveState();
+          if (typeof renderHojeTab === 'function') renderHojeTab();
+          if (typeof renderPropertySelector === 'function') renderPropertySelector();
+          location.reload(); // garante UI actualizada
+          return;
+        }
+      } catch (e) { console.warn('apply cloud', e); }
+    } else {
+      // Primeira vez: envia o que está no browser para a nuvem
+      await pushToCloud(user.uid);
+    }
+  });
+
+  // Depois de cada gravação local, tenta nuvem
+  const _hook = setInterval(() => {
+    if (typeof saveState !== 'function') return;
+    clearInterval(_hook);
+    const orig = saveState;
+    saveState = async function (...args) {
+      const r = await orig.apply(this, args);
+      try { await window.__fbPushCloud(); } catch (e) {}
+      return r;
+    };
+  }, 500);
+
+  // Botão sair (canto)
+  const out = document.createElement('button');
+  out.textContent = 'Sair da conta';
+  out.title = 'Terminar sessão Firebase';
+  out.style.cssText = 'position:fixed;bottom:8px;left:8px;z-index:99998;font-size:11px;padding:6px 10px;border-radius:6px;border:1px solid #2a3550;background:#121826;color:#8a94a8;cursor:pointer;';
+  out.onclick = () => auth.signOut();
+  document.body.appendChild(out);
+})();
+</script>
 </body>
 </html>
