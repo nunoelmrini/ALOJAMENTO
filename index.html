@@ -805,22 +805,38 @@
     appId: "1:401234375880:web:b41eb60bc1c0cd791ee1fd",
     measurementId: "G-L7BR05SM36"
   };
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const auth = getAuth(app);
 
-  const app = initializeApp(firebaseConfig);
-  const db = getFirestore(app);
-  const auth = getAuth(app);
-
-  signInAnonymously(auth).then(() => {
-    console.log("Firebase autenticado com sucesso.");
+// Usar o observador para verificar a sessão e evitar chamadas repetidas
+onAuthStateChanged(auth, (user) => {
+  if (user) {
+    console.log("Sessão já existente:", user.uid);
     const btn = document.getElementById("firebaseStatusBtn");
     if (btn) {
       btn.textContent = "☁️ Firebase: Sincronizado";
       btn.classList.add("drive-active");
     }
-  }).catch((error) => {
-    console.error("Erro na autenticação anónima da Firebase:", error);
-  });
+  } else {
+    // Só executa o login anónimo se não estiver ninguém autenticado
+    signInAnonymously(auth).then(() => {
+      console.log("Firebase autenticado com sucesso.");
+      const btn = document.getElementById("firebaseStatusBtn");
+      if (btn) {
+        btn.textContent = "☁️ Firebase: Sincronizado";
+        btn.classList.add("drive-active");
+      }
+    }).catch((error) => {
+      console.error("Erro na autenticação anónima da Firebase:", error);
+    });
+  }
+});
 
+
+
+
+ 
   // Expor utilitários globalmente para o script principal
   window.firebaseDB = db;
   window.FirebaseFirestore = { doc, setDoc, getDoc, onSnapshot };
