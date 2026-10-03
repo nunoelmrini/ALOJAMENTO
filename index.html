@@ -10686,14 +10686,14 @@ function idealPriceRows(){
   return out;
 }
 function decorateHojeLayout(){
-  const grid=document.getElementById('hojeGrid');if(!grid)return;grid.querySelector('[data-hoje-card="ideal"]')?.remove();
+  const grid=document.getElementById('hojeGrid');if(!grid)return;decorateForecast(grid);grid.querySelector('[data-hoje-card="ideal"]')?.remove();
   const rows=idealPriceRows(),ch=rows.filter(r=>Math.abs(r.sug-r.cur)>0.5),card=document.createElement('div');card.className='hoje-card';card.setAttribute('data-hoje-card','ideal');
   card.innerHTML='<h3>Preço ideal por quarto</h3><p style="font-size:11px;color:var(--paper-dim);margin:0 0 8px">Mediana da casa e vagas do ano. Sugestão simples, não é análise de mercado.</p>'+
     (ch.length?ch.map(r=>{const d=r.sug-r.cur;return '<div class="alert-row" style="display:flex;justify-content:space-between;gap:8px;padding:6px 0"><span>Quarto '+r.rid+' · '+r.h+' — '+fmt(r.cur)+' → <b>'+fmt(r.sug)+'</b></span><span style="color:'+(d>0?'#2e9e6b':'#d99a1c')+'">'+(d>0?'+':'')+fmt(d)+'</span></div>';}).join(''):'<div class="empty-note">Rendas alinhadas com a mediana. Nada a alterar.</div>')+
     '<div style="font-size:11px;color:var(--paper-dim);margin-top:6px">'+rows.length+' quartos analisados</div>';
   grid.appendChild(card);
-  const ord={vacant:0,reminders:1,contracts:2,maint:3,debts:4,cobrancas:5,ideal:6,summary:-2,calendar:-1},f=(typeof hojeFilter!=='undefined')?hojeFilter:'all';
-  grid.querySelectorAll('[data-hoje-card]').forEach(c=>{const k=c.getAttribute('data-hoje-card');c.style.order=(k in ord)?ord[k]:9;if(k==='cobrancas')c.style.gridColumn='auto';if(k==='ideal')c.style.display=(f==='all')?'':'none';});
+  const ord={forecast:0,vacant:1,reminders:2,contracts:3,maint:4,debts:5,cobrancas:6,ideal:7,summary:-2,calendar:-1},f=(typeof hojeFilter!=='undefined')?hojeFilter:'all';
+  grid.querySelectorAll('[data-hoje-card]').forEach(c=>{const k=c.getAttribute('data-hoje-card');c.style.order=(k in ord)?ord[k]:9;if(k==='cobrancas')c.style.gridColumn='auto';if(k==='ideal'||k==='forecast')c.style.display=(f==='all')?'':'none';});
 }
 {const _p=renderHojeTab;renderHojeTab=function(){_p();try{decorateHojeLayout();}catch(e){console.warn(e);}};}
 {const _c=renderCobrancasPorInquilino;renderCobrancasPorInquilino=function(){_c.apply(this,arguments);try{decorateHojeLayout();}catch(e){console.warn(e);}};}
@@ -10719,6 +10719,35 @@ collectAllOverdue=async function(){
       const ph=(r.t.fiscal&&(r.t.fiscal.whatsapp||r.t.fiscal.telefone))||r.t.telefone||'';openWhatsAppToNumber(ph,buildCobrançaMessage({rid:r.rid,nome:r.t.nome||'',kind:'renda',monthLabel:(MONTH_LABELS[r.k]||r.mk),val:r.val,due,daysLate:late}));};d.appendChild(b);box.appendChild(d);});
   const c=document.createElement('button');c.type='button';c.className='inq-filter-btn';c.style.marginTop='12px';c.textContent='Fechar';c.onclick=()=>ov.remove();box.appendChild(c);ov.appendChild(box);ov.onclick=e=>{if(e.target===ov)ov.remove();};document.body.appendChild(ov);
 };
+
+/* ===== Lembretes automáticos (aniversário de renda + documentos) e previsão do mês ===== */
+renderContractAlerts=_rcaOrig;
+function syncAutoReminders(){
+  state.reminders=state.reminders||[];const td=new Date(localDateString()+'T00:00:00'),want={},p2=n=>String(n).padStart(2,'0');
+  Object.entries(state.tenants||{}).forEach(([rid,t])=>{if(!t||currentAutoStatus(rid)==='vago')return;const nm=t.nome||'';
+    if(t.data_inicio){const st=new Date(t.data_inicio+'T00:00:00');let c=new Date(td.getFullYear(),st.getMonth(),st.getDate());if(c<td)c=new Date(td.getFullYear()+1,st.getMonth(),st.getDate());
+      if(c.getFullYear()-st.getFullYear()>=1){const ds=c.getFullYear()+'-'+p2(c.getMonth()+1)+'-'+p2(c.getDate());want['ann|'+rid+'|'+ds]={title:'Quarto '+rid+' · '+nm+' — atualização de renda (aniversário do contrato)',dueDate:ds,type:'Renda',roomId:rid};}}
+    const v=t.fiscal&&t.fiscal.docValidade;if(v&&/^\d{4}-\d{2}-\d{2}$/.test(v))want['doc|'+rid+'|'+v]={title:'Quarto '+rid+' · '+nm+' — documento de identificação expira',dueDate:v,type:'Outro',roomId:rid};});
+  let ch=false;Object.entries(want).forEach(([k,w])=>{if(!state.reminders.some(r=>r.autoKey===k)){state.reminders.push({id:featureId('rem'),title:w.title,dueDate:w.dueDate,leadDays:45,type:w.type,roomId:w.roomId,resolved:false,propertyId:store.currentId,auto:true,autoKey:k});ch=true;}});
+  const keep=state.reminders.filter(r=>!(r.auto&&!r.resolved&&!(r.autoKey in want)));if(keep.length!==state.reminders.length){state.reminders=keep;ch=true;}return ch;
+}
+async function runAutoReminders(){try{if(syncAutoReminders()){await saveState();if(typeof renderReminders==='function')renderReminders();if(typeof renderHojeTab==='function')renderHojeTab();}}catch(e){console.warn('lembretes auto',e);}}
+setTimeout(runAutoReminders,4500);setInterval(runAutoReminders,3600000);
+function monthForecast(){
+  const i=currentRealMonthIndex(),mk=MONTH_KEYS[i];let exp=0,rec=0;const pend=[];
+  state.rooms.forEach(r=>{if(!isRentedThisMonth(mk,r.id,i))return;const v=Number(effectiveTotalPagar(mk,r.id))||0;exp+=v;if(effectiveStatusRenda(mk,r.id)==='Pago')rec+=v;else pend.push({rid:r.id,nome:(state.tenants[r.id]||{}).nome||'',v});});
+  let ph=0,pt=0;MONTH_KEYS.forEach((m,k)=>{if(k>=i)return;state.rooms.forEach(r=>{if(isRentedThisMonth(m,r.id,k)){pt++;if(effectiveStatusRenda(m,r.id)==='Pago')ph++;}});});
+  const rate=pt?ph/pt:1,pending=exp-rec;return {mk,exp,rec,pending,pend,rate,real:rec+pending*rate};
+}
+function decorateForecast(grid){
+  grid.querySelector('[data-hoje-card="forecast"]')?.remove();const f=monthForecast(),pct=f.exp?Math.round(f.rec/f.exp*100):100,now=new Date(),dim=new Date(now.getFullYear(),now.getMonth()+1,0).getDate();
+  const c=document.createElement('div');c.className='hoje-card';c.setAttribute('data-hoje-card','forecast');
+  c.innerHTML='<h3>Previsão de recebimentos — '+f.mk+'</h3><div style="height:12px;border-radius:6px;background:rgba(128,128,128,.25);overflow:hidden"><div style="width:'+pct+'%;height:100%;background:#2e9e6b"></div></div>'+
+   '<div style="display:flex;justify-content:space-between;font-size:13px;margin:8px 0"><span>Esperado <b>'+fmt(f.exp)+'</b></span><span>Recebido <b style="color:#2e9e6b">'+fmt(f.rec)+'</b></span><span>Em falta <b style="color:#d24a4a">'+fmt(f.pending)+'</b></span></div>'+
+   '<div style="font-size:12px;opacity:.8">Dia '+now.getDate()+' de '+dim+' · previsão realista no fim do mês: <b>'+fmt(f.real)+'</b> (cobrança histórica '+Math.round(f.rate*100)+'%)</div>'+
+   (f.pend.length?'<div style="margin-top:8px;font-size:12px">'+f.pend.slice(0,6).map(p=>'<div style="display:flex;justify-content:space-between;padding:3px 0"><span>Quarto '+escapeHTML(String(p.rid))+' · '+escapeHTML(p.nome)+'</span><span>'+fmt(p.v)+'</span></div>').join('')+(f.pend.length>6?'<div style="opacity:.7">+ '+(f.pend.length-6)+' em falta</div>':'')+'</div>':'<div class="empty-note" style="margin-top:8px">Todas as rendas deste mês estão recebidas.</div>');
+  grid.appendChild(c);
+}
 </script>
 <nav class="bottom-nav" id="bottomNav" aria-label="Navegação principal">
   <button type="button" data-tab="hoje" class="active"><span>◎</span>Hoje</button>
