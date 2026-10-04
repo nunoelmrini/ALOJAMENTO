@@ -10758,7 +10758,7 @@ function overlayCard(title,html,btns){
   ov.appendChild(b);ov.onclick=e=>{if(e.target===ov)ov.remove();};document.body.appendChild(ov);return ov;
 }
 function openToolsMenu(){
-  const items=[['Pagamento parcial',partialPayment],['Atualizar rendas %',()=>clickByText('Atualizar rendas %')],['Extrato por inquilino',()=>clickByText('Extrato inquilino')],['Duplicar ficha',duplicateTenantRecord],['Análise (vagas e caixa)',showAnalysis],['Preço ideal por quarto',showIdealPrices],['Alterações / desfazer',showChangeLog],['Verificar dados',showConsistency],['Testes de cálculo',showSelfTests],['Restaurar cópia automática',restoreAutoSnapshot]];
+  const items=[['Pagamento parcial',partialPayment],['Atualizar rendas %',()=>clickByText('Atualizar rendas %')],['Extrato por inquilino',()=>clickByText('Extrato inquilino')],['Duplicar ficha',duplicateTenantRecord],['Análise (vagas e caixa)',showAnalysis],['Preço ideal por quarto',showIdealPrices],['Alterações / desfazer',showChangeLog],['Verificar dados',showConsistency],['Testes de cálculo',showSelfTests],['Restaurar cópia automática',restoreAutoSnapshot],['Conciliar extrato bancário',autoReconcileBank],['Recibos do mês',receiptsOfMonth]];
   const ov=overlayCard('Ferramentas','<div id="toolsList"></div>');const l=ov.querySelector('#toolsList');
   items.forEach(([t,f])=>{const b=document.createElement('button');b.type='button';b.className='inq-filter-btn';b.style.cssText='display:block;width:100%;text-align:left;margin:0 0 6px';b.textContent=t;b.onclick=()=>{ov.remove();f();};l.appendChild(b);});
 }
@@ -10781,6 +10781,50 @@ async function closeMonthChecklist(){
 {const _b=buildCobrançaMessage;buildCobrançaMessage=function(o){let m=_b(o);const pct=Number((state.landlordInfo||{}).lateFeePercent)||0;if(pct>0&&o&&o.daysLate>0&&o.val)m+='\nPenalização calculada ('+pct+'%): '+fmt(o.val*pct/100)+'.';return m;};}
 {const _c=collectAllOverdue;collectAllOverdue=async function(){await _c();const pct=Number((state.landlordInfo||{}).lateFeePercent)||0;if(!pct)return;document.querySelectorAll('div').forEach(d=>{if(d.style.zIndex==='99990'){d.querySelectorAll('span[style*="font-size:13px"]').forEach(sp=>{const m=sp.textContent.match(/EUR\s([\d.,]+)/);if(m&&/atraso/.test(sp.textContent)){const v=Number(m[1].replace('.','').replace(',','.'));if(v)sp.insertAdjacentHTML('beforeend','<br><span style="color:#ffcf6b">+ penalização '+pct+'%: '+fmt(v*pct/100)+'</span>');}});}});};}
 setTimeout(()=>{['Atualizar rendas %','Extrato inquilino','Duplicar ficha','Verificar dados','Restaurar cópia automática','Alterações / desfazer'].forEach(t=>[...document.querySelectorAll('#imovelFilters button')].filter(b=>b.textContent.trim()===t).forEach(b=>b.style.display='none'));},300);
+
+/* ===== Conciliação bancária automática + recibos numerados ===== */
+const normTxt=v=>String(v||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9 ]+/g,' ');
+function nameScore(rid,desc){
+  const t=state.tenants[rid]||{},d=' '+normTxt(desc)+' ',toks=new Set(normTxt((t.nome||'')+' '+((t.fiscal||{}).nomeCompleto||'')).split(' ').filter(x=>x.length>=3));
+  let hit=0;toks.forEach(k=>{if(d.includes(' '+k))hit++;});const ref=normTxt((t.fiscal||{}).referencia||'').trim();if(ref&&ref.length>=4&&d.includes(ref))hit+=2;return hit;
+}
+function bankProposals(){
+  const out=[],cur=currentRealMonthIndex(),year=Number(state.managementYear)||2026,usedTx=new Set(),usedPay=new Set();
+  (state.bankReconciliations||[]).filter(l=>!l.transactionId&&l.type==='income').forEach(line=>{
+    const gap=t=>Math.abs(new Date(t.date+'T00:00:00')-new Date(line.date+'T00:00:00'))/864e5;
+    const cands=bankCandidates(line).filter(t=>t.category==='Renda'&&!usedTx.has(t.id)&&gap(t)<=12).map(t=>({t,sc:nameScore(t.roomId,line.description)*2+(gap(t)<=10?1:0)})).sort((a,b)=>b.sc-a.sc);
+    if(cands.length&&cands[0].sc>=2){usedTx.add(cands[0].t.id);out.push({line,kind:'link',tx:cands[0].t,rid:cands[0].t.roomId,sc:cands[0].sc});return;}
+    for(const r of state.rooms){const sc=nameScore(r.id,line.description);if(sc<1)continue;
+      const lm=Math.min(cur,Number(line.date.slice(5,7))-1);for(let k=lm;k>=0;k--){const mk=MONTH_KEYS[k],key=r.id+'|'+mk;if(usedPay.has(key)||!isRentedThisMonth(mk,r.id,k)||effectiveStatusRenda(mk,r.id)==='Pago')continue;
+        if(Math.round((Number(effectiveTotalPagar(mk,r.id))||0)*100)===Math.round(line.amount*100)){usedPay.add(key);out.push({line,kind:'pay',rid:r.id,mk,sc:sc*2});return;}}}
+  });
+  return out;
+}
+async function applyBankProposals(list){
+  let n=0;try{await autoSnapshot();}catch(e){}
+  for(const p of list){
+    if(p.kind==='link'){p.line.transactionId=p.tx.id;n++;}
+    else if(await setPanelPaymentStatus('renda',p.rid,'Pago',p.mk,{date:p.line.date,method:'Transferência bancária'})){const ref=panelStatusRef('renda',p.rid,p.mk),t=(state.transactions||[]).find(x=>x.statusRef===ref&&x.source==='panel_status');if(t){p.line.transactionId=t.id;n++;}}}
+  await saveState();if(typeof renderBankReconciliation==='function')renderBankReconciliation();return n;
+}
+async function autoReconcileBank(){
+  const props=bankProposals();if(!props.length){await customAlert('Sem propostas automáticas. Importa primeiro um extrato CSV (Despesas & Caixa → Conferir extrato) ou associa à mão.');return;}
+  const html=props.map((p,i)=>'<label style="display:flex;gap:8px;padding:6px 0;font-size:12px;border-bottom:1px solid rgba(128,128,128,.25)"><input type="checkbox" data-p="'+i+'" '+(p.sc>=2?'checked':'')+'><span>'+escapeHTML(p.line.date)+' · '+fmt(p.line.amount)+'<br><i style="opacity:.7">'+escapeHTML(p.line.description.slice(0,50))+'</i><br>→ '+(p.kind==='link'?'associar ao pagamento do quarto '+escapeHTML(String(p.rid)):'marcar PAGO: quarto '+escapeHTML(String(p.rid))+' · '+p.mk)+'</span></label>').join('');
+  const ov=overlayCard('Conciliação automática ('+props.length+')',html,[['Aplicar selecionadas',async()=>{const sel=[...ov.querySelectorAll('input[data-p]:checked')].map(i=>props[Number(i.dataset.p)]);const n=await applyBankProposals(sel);showSaveToast(true,n+' movimento(s) conciliados');}]]);
+}
+function receiptNumber(rid,mk){
+  state.receipts=state.receipts||[];const year=Number(state.managementYear)||2026;let r=state.receipts.find(x=>x.year===year&&String(x.rid)===String(rid)&&x.mk===mk);
+  if(!r){const n=state.receipts.filter(x=>x.year===year).length+1;r={year,rid:String(rid),mk,no:year+'/'+String(n).padStart(4,'0'),at:new Date().toISOString()};state.receipts.push(r);saveState();}return r.no;
+}
+{const _b=buildReceiptHtml;buildReceiptHtml=function(rid,mk,amount){let h=_b(rid,mk,amount);const tag='<p style="font-family:sans-serif;font-size:12px;margin:12px 24px">Recibo n.º <b>'+receiptNumber(rid,mk)+'</b></p>';return h.includes('</body>')?h.replace('</body>',tag+'</body>'):h+tag;};}
+async function receiptsOfMonth(){
+  const mk=await askMonthKey(MONTH_KEYS[currentRealMonthIndex()]);if(!mk)return;const i=MONTH_KEYS.indexOf(mk),rows=state.rooms.filter(r=>isRentedThisMonth(mk,r.id,i)&&effectiveStatusRenda(mk,r.id)==='Pago');
+  if(!rows.length){await customAlert('Sem rendas pagas em '+mk+'.');return;}
+  const ov=overlayCard('Recibos de '+mk+' ('+rows.length+')','<div id="rcList"></div>');const l=ov.querySelector('#rcList');
+  rows.forEach(r=>{const amt=Number(effectiveTotalPagar(mk,r.id))||0,d=document.createElement('div');d.style.cssText='display:flex;justify-content:space-between;align-items:center;gap:6px;padding:6px 0;font-size:13px;border-bottom:1px solid rgba(128,128,128,.25)';d.innerHTML='<span>'+escapeHTML((state.tenants[r.id]||{}).nome||('Quarto '+r.id))+' · '+fmt(amt)+'</span>';
+    [['Recibo',()=>openReceiptWindow(r.id,mk,amt)],['WhatsApp',()=>openWhatsAppToNumber(tenantPhone(r.id),buildReceiptWhatsAppMsg(r.id,mk,amt))]].forEach(([t,f])=>{const b=document.createElement('button');b.type='button';b.className='inq-filter-btn';b.textContent=t;b.onclick=f;d.appendChild(b);});l.appendChild(d);});
+}
+{const st=document.getElementById('bankReconcileStatus');if(st&&st.parentNode){const b=document.createElement('button');b.type='button';b.className='btn small';b.textContent='Conciliar automaticamente';b.onclick=autoReconcileBank;st.parentNode.insertBefore(b,st);}}
 </script>
 <nav class="bottom-nav" id="bottomNav" aria-label="Navegação principal">
   <button type="button" data-tab="hoje" class="active"><span>◎</span>Hoje</button>
