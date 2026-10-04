@@ -10758,7 +10758,7 @@ function overlayCard(title,html,btns){
   ov.appendChild(b);ov.onclick=e=>{if(e.target===ov)ov.remove();};document.body.appendChild(ov);return ov;
 }
 function openToolsMenu(){
-  const items=[['Pagamento parcial',partialPayment],['Atualizar rendas %',()=>clickByText('Atualizar rendas %')],['Extrato por inquilino',()=>clickByText('Extrato inquilino')],['Duplicar ficha',duplicateTenantRecord],['Análise (vagas e caixa)',showAnalysis],['Preço ideal por quarto',showIdealPrices],['Alterações / desfazer',showChangeLog],['Verificar dados',showConsistency],['Testes de cálculo',showSelfTests],['Restaurar cópia automática',restoreAutoSnapshot],['Conciliar extrato bancário',autoReconcileBank],['Recibos do mês',receiptsOfMonth]];
+  const items=[['Pagamento parcial',partialPayment],['Atualizar rendas %',()=>clickByText('Atualizar rendas %')],['Extrato por inquilino',()=>clickByText('Extrato inquilino')],['Duplicar ficha',duplicateTenantRecord],['Análise (vagas e caixa)',showAnalysis],['Preço ideal por quarto',showIdealPrices],['Alterações / desfazer',showChangeLog],['Verificar dados',showConsistency],['Testes de cálculo',showSelfTests],['Restaurar cópia automática',restoreAutoSnapshot],['Conciliar extrato bancário',autoReconcileBank],['Recibos do mês',receiptsOfMonth],['Montra: quartos e fotos',openShowcaseEditor],['Candidatos',showCandidates]];
   const ov=overlayCard('Ferramentas','<div id="toolsList"></div>');const l=ov.querySelector('#toolsList');
   items.forEach(([t,f])=>{const b=document.createElement('button');b.type='button';b.className='inq-filter-btn';b.style.cssText='display:block;width:100%;text-align:left;margin:0 0 6px';b.textContent=t;b.onclick=()=>{ov.remove();f();};l.appendChild(b);});
 }
@@ -10825,6 +10825,43 @@ async function receiptsOfMonth(){
     [['Recibo',()=>openReceiptWindow(r.id,mk,amt)],['WhatsApp',()=>openWhatsAppToNumber(tenantPhone(r.id),buildReceiptWhatsAppMsg(r.id,mk,amt))]].forEach(([t,f])=>{const b=document.createElement('button');b.type='button';b.className='inq-filter-btn';b.textContent=t;b.onclick=f;d.appendChild(b);});l.appendChild(d);});
 }
 {const st=document.getElementById('bankReconcileStatus');if(st&&st.parentNode){const b=document.createElement('button');b.type='button';b.className='btn small';b.textContent='Conciliar automaticamente';b.onclick=autoReconcileBank;st.parentNode.insertBefore(b,st);}}
+
+/* ===== Montra pública, fotos e candidatos ===== */
+const SH=()=>{state.showcase=state.showcase||{houses:{},rooms:{},whatsapp:''};state.showcase.houses=state.showcase.houses||{};state.showcase.rooms=state.showcase.rooms||{};return state.showcase;};
+function compressImage(file,maxW,q){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>{const im=new Image();im.onload=()=>{const sc=Math.min(1,maxW/im.width),c=document.createElement('canvas');c.width=Math.round(im.width*sc);c.height=Math.round(im.height*sc);c.getContext('2d').drawImage(im,0,0,c.width,c.height);let qq=q,d=c.toDataURL('image/jpeg',qq);while(d.length>380000&&qq>0.35){qq-=0.1;d=c.toDataURL('image/jpeg',qq);}res(d);};im.onerror=rej;im.src=r.result;};r.onerror=rej;r.readAsDataURL(file);});}
+async function uploadPhotos(target,house,files){
+  const F=window.__fb;if(!F||!F.uid){await customAlert('Entra primeiro na nuvem (botão ☁ no topo).');return 0;}const sh=SH();let list;
+  if(target.startsWith('H:')){const h=target.slice(2);sh.houses[h]=sh.houses[h]||{};list=sh.houses[h].fotos=sh.houses[h].fotos||[];}else{sh.rooms[target]=sh.rooms[target]||{};list=sh.rooms[target].fotos=sh.rooms[target].fotos||[];}
+  let n=0;for(const f of files){const d=await compressImage(f,1000,0.72),id='p'+Date.now().toString(36)+Math.random().toString(36).slice(2,5);await F.db.collection('publicPhotos').doc(id).set({target:String(target),house,data:d,at:new Date().toISOString()});list.push(id);n++;}await saveState();return n;
+}
+async function deletePhoto(target,id){const F=window.__fb,sh=SH(),o=target.startsWith('H:')?(sh.houses[target.slice(2)]||{}):(sh.rooms[target]||{});o.fotos=(o.fotos||[]).filter(x=>x!==id);try{await F.db.collection('publicPhotos').doc(id).delete();}catch(e){}await saveState();}
+async function publishShowcase(){
+  const F=window.__fb;if(!F||!F.uid){await customAlert('Entra primeiro na nuvem (botão ☁ no topo).');return -1;}const sh=SH(),rooms=[];
+  state.rooms.forEach(r=>{const ro=sh.rooms[r.id];if(!ro||!ro.publish)return;const t=state.tenants[r.id]||{},vago=currentAutoStatus(r.id)==='vago',du=t.data_final?daysUntil(t.data_final):null;
+    rooms.push({id:String(r.id),house:r.house,preco:Number(ro.preco)||0,area:ro.area||'',cama:ro.cama||'',wc:ro.wc||'',desc:ro.desc||'',livre:vago||(du!=null&&du<=60),desde:vago?todayISO():(t.data_final||''),fotos:ro.fotos||[]});});
+  const houses={};['baixo','cima'].forEach(h=>{const x=sh.houses[h]||{};houses[h]={nome:x.nome||h,zona:x.zona||'',desc:x.desc||'',regras:x.regras||'',fotos:x.fotos||[]};});
+  await F.db.collection('public').doc('casa').set({updatedAt:new Date().toISOString(),whatsapp:sh.whatsapp||'',houses,rooms});return rooms.length;
+}
+async function openShowcaseEditor(){
+  const sh=SH(),inp='width:100%;box-sizing:border-box;padding:6px;margin:3px 0;border-radius:6px;border:1px solid #2a3550;background:#0a0e17;color:#fff;font-size:12px';
+  let h='<p style="font-size:12px;opacity:.75;margin:0 0 8px">Só publica o que marcares. Nunca são enviados nomes, rendas pagas nem dados pessoais.</p><label style="font-size:12px">WhatsApp de contacto (com indicativo)</label><input id="shWa" style="'+inp+'" value="'+escapeHTML(sh.whatsapp||'')+'">';
+  ['baixo','cima'].forEach(k=>{const x=sh.houses[k]||{};h+='<div style="border-top:1px solid #2a3550;margin-top:10px;padding-top:8px"><b>Casa '+k+'</b><input data-h="'+k+'" data-f="nome" placeholder="Nome público" style="'+inp+'" value="'+escapeHTML(x.nome||'')+'"><input data-h="'+k+'" data-f="zona" placeholder="Zona / morada aproximada" style="'+inp+'" value="'+escapeHTML(x.zona||'')+'"><textarea data-h="'+k+'" data-f="desc" placeholder="Descrição da casa, cozinha, áreas comuns" style="'+inp+'">'+escapeHTML(x.desc||'')+'</textarea><textarea data-h="'+k+'" data-f="regras" placeholder="Regras" style="'+inp+'">'+escapeHTML(x.regras||'')+'</textarea><label class="inq-filter-btn" style="display:inline-block;margin:4px 0">📷 Fotos da casa <input type="file" accept="image/*" capture="environment" multiple hidden data-photo="H:'+k+'" data-house="'+k+'"></label> <span style="font-size:11px">'+((x.fotos||[]).length)+' foto(s)</span></div>';});
+  state.rooms.forEach(r=>{const o=sh.rooms[r.id]||{};h+='<div style="border-top:1px solid #2a3550;margin-top:10px;padding-top:8px"><label><input type="checkbox" data-r="'+r.id+'" data-f="publish" '+(o.publish?'checked':'')+'> <b>Quarto '+escapeHTML(String(r.id))+'</b> ('+escapeHTML(r.house||'')+')</label><input data-r="'+r.id+'" data-f="preco" type="number" placeholder="Preço € / mês" style="'+inp+'" value="'+(o.preco||'')+'"><input data-r="'+r.id+'" data-f="area" placeholder="Área (m²)" style="'+inp+'" value="'+escapeHTML(o.area||'')+'"><input data-r="'+r.id+'" data-f="cama" placeholder="Cama (solteiro/casal)" style="'+inp+'" value="'+escapeHTML(o.cama||'')+'"><input data-r="'+r.id+'" data-f="wc" placeholder="Casa de banho (privada/partilhada)" style="'+inp+'" value="'+escapeHTML(o.wc||'')+'"><textarea data-r="'+r.id+'" data-f="desc" placeholder="Descrição, mobília, despesas incluídas" style="'+inp+'">'+escapeHTML(o.desc||'')+'</textarea><label class="inq-filter-btn" style="display:inline-block;margin:4px 0">📷 Fotos <input type="file" accept="image/*" capture="environment" multiple hidden data-photo="'+r.id+'" data-house="'+escapeHTML(r.house||'')+'"></label> <span style="font-size:11px">'+((o.fotos||[]).length)+' foto(s)</span></div>';});
+  const ov=overlayCard('Montra de quartos',h,[['Guardar e publicar',async()=>{}]]);
+  const save=()=>{sh.whatsapp=ov.querySelector('#shWa').value.trim();ov.querySelectorAll('[data-h]').forEach(e=>{sh.houses[e.dataset.h]=sh.houses[e.dataset.h]||{};sh.houses[e.dataset.h][e.dataset.f]=e.value;});ov.querySelectorAll('[data-r]').forEach(e=>{const o=sh.rooms[e.dataset.r]=sh.rooms[e.dataset.r]||{};o[e.dataset.f]=e.type==='checkbox'?e.checked:e.value;});};
+  ov.querySelectorAll('input[data-photo]').forEach(f=>f.onchange=async()=>{save();const n=await uploadPhotos(f.dataset.photo,f.dataset.house,[...f.files]);if(n)showSaveToast(true,n+' foto(s) enviada(s)');});
+  const pb=[...ov.querySelectorAll('button')].find(b=>b.textContent==='Guardar e publicar');pb.onclick=async(e)=>{e.stopPropagation();save();await saveState();const n=await publishShowcase();if(n>=0){showSaveToast(true,'Montra publicada: '+n+' quarto(s)');}};
+}
+async function showCandidates(){
+  const F=window.__fb;if(!F||!F.uid){await customAlert('Entra primeiro na nuvem (botão ☁ no topo).');return;}
+  const snap=await F.db.collection('candidatos').orderBy('at','desc').limit(50).get(),rows=[];snap.forEach(d=>rows.push({id:d.id,...d.data()}));
+  if(!rows.length){await customAlert('Ainda não há candidatos.');return;}
+  const est=['novo','contactado','visita marcada','aceite','recusado'],ov=overlayCard('Candidatos ('+rows.length+')','<div id="candList"></div>');const l=ov.querySelector('#candList');
+  rows.forEach(c=>{const d=document.createElement('div');d.style.cssText='padding:8px 0;border-bottom:1px solid rgba(128,128,128,.25);font-size:12px';d.innerHTML='<b>'+escapeHTML(c.nome||'')+'</b> · '+escapeHTML(c.contacto||'')+'<br>Quarto '+escapeHTML(String(c.roomId||'—'))+' · entrada '+escapeHTML(c.entrada||'—')+' · '+escapeHTML(c.ocupacao||'')+'<br><i>'+escapeHTML((c.mensagem||'').slice(0,160))+'</i><br>';
+    const sel=document.createElement('select');est.forEach(e=>{const o=document.createElement('option');o.textContent=e;if((c.estado||'novo')===e)o.selected=true;sel.appendChild(o);});sel.onchange=()=>F.db.collection('candidatos').doc(c.id).update({estado:sel.value});d.appendChild(sel);
+    const w=document.createElement('button');w.type='button';w.className='inq-filter-btn';w.textContent='WhatsApp';w.onclick=()=>openWhatsAppToNumber(String(c.contacto||'').replace(/[^\d+]/g,''),'Olá '+(c.nome||'')+', obrigado pelo interesse no quarto '+(c.roomId||'')+'.');d.appendChild(w);
+    const x=document.createElement('button');x.type='button';x.className='inq-filter-btn';x.textContent='Apagar';x.onclick=async()=>{if(await customConfirm('Apagar este candidato?','Apagar')){await F.db.collection('candidatos').doc(c.id).delete();d.remove();}};d.appendChild(x);l.appendChild(d);});
+}
 </script>
 <nav class="bottom-nav" id="bottomNav" aria-label="Navegação principal">
   <button type="button" data-tab="hoje" class="active"><span>◎</span>Hoje</button>
@@ -10894,6 +10931,7 @@ auth.onAuthStateChanged(async u=>{
   if(!u){uid=null;if(unsub){unsub();unsub=null;}setBadge('☁ Entrar');if(!LS('fb_skip'))gate.style.display='flex';return;}
   uid=u.uid;gate.style.display='none';setBadge('☁ A sincronizar…');
   try{const r=await reconcile();window.__cloudLast=r;if(!applying){okBadge();listen();dailyBackup(snapNow(),LS('fb_seen_'+uid));checkOverdueNotify();}}catch(e){setBadge('⚠ Sem ligação');console.warn('reconcile',e);}});
+window.__fb={get db(){return db;},get uid(){return uid;}};
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&timer){clearTimeout(timer);timer=null;push();}});
 const _s=saveState;saveState=async function(...a){const r=await _s.apply(this,a);if(r!==false)schedulePush();return r;};
 })();
