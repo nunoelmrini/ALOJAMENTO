@@ -10758,7 +10758,7 @@ function overlayCard(title,html,btns){
   ov.appendChild(b);ov.onclick=e=>{if(e.target===ov)ov.remove();};document.body.appendChild(ov);return ov;
 }
 function openToolsMenu(){
-  const items=[['Pagamento parcial',partialPayment],['Atualizar rendas %',()=>clickByText('Atualizar rendas %')],['Extrato por inquilino',()=>clickByText('Extrato inquilino')],['Duplicar ficha',duplicateTenantRecord],['Análise (vagas e caixa)',showAnalysis],['Preço ideal por quarto',showIdealPrices],['Alterações / desfazer',showChangeLog],['Verificar dados',showConsistency],['Testes de cálculo',showSelfTests],['Restaurar cópia automática',restoreAutoSnapshot],['Conciliar extrato bancário',autoReconcileBank],['Recibos do mês',receiptsOfMonth],['Montra: quartos e fotos',openShowcaseEditor],['Candidatos',showCandidates],['Portal do inquilino',openPortalManager],['Pedidos dos inquilinos',showRequests]];
+  const items=[['Pagamento parcial',partialPayment],['Atualizar rendas %',()=>clickByText('Atualizar rendas %')],['Extrato por inquilino',()=>clickByText('Extrato inquilino')],['Duplicar ficha',duplicateTenantRecord],['Análise (vagas e caixa)',showAnalysis],['Preço ideal por quarto',showIdealPrices],['Alterações / desfazer',showChangeLog],['Verificar dados',showConsistency],['Testes de cálculo',showSelfTests],['Restaurar cópia automática',restoreAutoSnapshot],['Conciliar extrato bancário',autoReconcileBank],['Recibos do mês',receiptsOfMonth],['Montra: quartos e fotos',openShowcaseEditor],['Candidatos',showCandidates],['Portal do inquilino',openPortalManager],['Portal: NIBs e pagamentos',openPaySettings],['Pedidos dos inquilinos',showRequests]];
   const ov=overlayCard('Ferramentas','<div id="toolsList"></div>');const l=ov.querySelector('#toolsList');
   items.forEach(([t,f])=>{const b=document.createElement('button');b.type='button';b.className='inq-filter-btn';b.style.cssText='display:block;width:100%;text-align:left;margin:0 0 6px';b.textContent=t;b.onclick=()=>{ov.remove();f();};l.appendChild(b);});
 }
@@ -10893,6 +10893,33 @@ async function showRequests(){
     if(c.tipo==='comprovativo'&&c.mes&&MONTH_KEYS.includes(c.mes)){const b=document.createElement('button');b.type='button';b.className='inq-filter-btn';b.textContent='Marcar renda paga';b.onclick=async()=>{if(await customConfirm('Confirmas que viste o pagamento na conta? Marca '+c.mes+' do quarto '+c.quarto+' como pago.','Marcar pago')){if(await setPanelPaymentStatus('renda',String(c.quarto),'Pago',c.mes,{date:localDateString(),method:'Comprovativo (portal)'})){sel.value='resolvido';F.db.collection('pedidos').doc(c.id).update({estado:'resolvido'});}}};d.appendChild(b);}
     l.appendChild(d);});
 }
+
+/* ===== Portal v2: despesas, NIBs/MB Way por inquilino, histórico completo, revogação automática ===== */
+portalDoc=function(rid){
+  const t=state.tenants[rid]||{},li=state.landlordInfo||{},cur=currentRealMonthIndex(),room=state.rooms.find(r=>String(r.id)===String(rid))||{},h=room.house,mk=MONTH_KEYS[cur],cats=['Água','Luz','Internet'];
+  const ibans=(li.ibans&&li.ibans.length)?li.ibans:[{label:'Principal',iban:li.iban||''}],ib=ibans[Math.min(Number(t.portalIban)||0,ibans.length-1)]||ibans[0];
+  const meses=[];MONTH_KEYS.forEach((m,k)=>{if(k>cur||!isRentedThisMonth(m,rid,k))return;meses.push({mk:m,r:Number(effectiveTotalPagar(m,rid))||0,rp:effectiveStatusRenda(m,rid)==='Pago',d:Number(effectiveExpenseAlloc(m,rid))||0,dp:effectiveStatusDespesas(m,rid)==='Pago'});});
+  const now=meses.find(x=>x.mk===mk)||null,bill=houseUtilityTotal(mk,h),ratio=bill>0&&now?now.d/bill:0,sum=(c,k)=>(state.expenses||[]).filter(e=>e.house===h&&e.category===c&&e.monthIdx===k).reduce((a,e)=>a+(Number(e.amount)||0),0);
+  const det=cats.map(c=>({c,v:Math.round(sum(c,cur)*ratio*100)/100})),casa=MONTH_KEYS.slice(0,cur+1).map((m,k)=>({mk:m,v:Math.round(cats.reduce((a,c)=>a+sum(c,k),0)*100)/100}));
+  return {quarto:String(rid),nome:String(t.nome||'').split(' ')[0],inicio:t.data_inicio||'',fim:t.data_final||'',renda:Number(t.renda)||0,mes:mk,now,det,total:now?now.r+now.d:0,meses,iban:ib.iban||'',ibanLabel:ib.label||'',titular:String(li.nome||''),mbway:String(li.mbway||''),mbwayRenda:!!t.mbwayRenda,dinheiro:t.cashOk!==false,referencia:String((t.fiscal||{}).referencia||''),penal:Number(li.lateFeePercent)||0,whatsapp:(state.showcase||{}).whatsapp||'',casa:{nome:((state.showcase||{}).houses||{})[h]&&state.showcase.houses[h].nome||('Casa '+h),mensal:casa},at:new Date().toISOString()};
+};
+async function revokeExpiredPortals(){
+  const F=window.__fb;if(!F||!F.uid)return 0;let n=0;
+  for(const [rid,t] of Object.entries(state.tenants||{})){if(!t||!t.portalToken)continue;const ended=currentAutoStatus(rid)==='vago'||(t.data_final&&daysUntil(t.data_final)<0);if(!ended)continue;try{await F.db.collection('portal').doc(t.portalToken).delete();delete t.portalToken;n++;}catch(e){console.warn('revogar',e);}}
+  if(n){await saveState();if(typeof showSaveToast==='function')showSaveToast(true,n+' link(s) do portal revogado(s): contrato terminado');}return n;
+}
+{const _pp=publishPortal;publishPortal=async function(s2){await revokeExpiredPortals();return _pp(s2);};}
+async function openPaySettings(){
+  const li=state.landlordInfo=state.landlordInfo||{},inp='padding:6px;margin:3px 4px 3px 0;border-radius:6px;border:1px solid #2a3550;background:#0a0e17;color:#fff;font-size:12px',ibans=(li.ibans&&li.ibans.length)?li.ibans.map(x=>({...x})):[{label:'Principal',iban:li.iban||''}];
+  const ov=overlayCard('NIBs e pagamentos no portal','<div id="pcNibs"></div><button type="button" class="inq-filter-btn" id="pcAdd">+ NIB</button><div style="margin:8px 0"><label style="font-size:12px">MB Way (telemóvel do senhorio)</label><br><input id="pcMb" style="'+inp+'" value="'+escapeHTML(li.mbway||'')+'"></div><div id="pcT"></div>',[['Guardar',async()=>{}]]);
+  const nb=ov.querySelector('#pcNibs'),draw=()=>{nb.innerHTML='';ibans.forEach((x,i)=>{const d=document.createElement('div');d.innerHTML='<input data-l="'+i+'" placeholder="Nome (ex.: Conta Casa Baixo)" style="'+inp+';width:38%" value="'+escapeHTML(x.label||'')+'"><input data-i="'+i+'" placeholder="NIB / IBAN" style="'+inp+';width:56%" value="'+escapeHTML(x.iban||'')+'">';nb.appendChild(d);});};draw();
+  ov.querySelector('#pcAdd').onclick=()=>{ibans.push({label:'',iban:''});draw();};
+  const tl=ov.querySelector('#pcT');state.rooms.filter(r=>state.tenants[r.id]&&currentAutoStatus(r.id)!=='vago').forEach(r=>{const t=state.tenants[r.id],d=document.createElement('div');d.style.cssText='border-top:1px solid #2a3550;padding:6px 0;font-size:12px';d.dataset.rid=r.id;d.innerHTML='<b>'+escapeHTML(t.nome||('Quarto '+r.id))+'</b> · quarto '+escapeHTML(String(r.id))+'<br>NIB: <select data-s="nib" style="'+inp+'"></select><br><label><input type="checkbox" data-s="mbr" '+(t.mbwayRenda?'checked':'')+'> Pode pagar a renda por MB Way</label><br><label><input type="checkbox" data-s="cash" '+(t.cashOk!==false?'checked':'')+'> Pode pagar em dinheiro</label>';tl.appendChild(d);});
+  const fillSel=()=>tl.querySelectorAll('select[data-s="nib"]').forEach(sel=>{const rid=sel.closest('[data-rid]').dataset.rid,cur=Number((state.tenants[rid]||{}).portalIban)||0;sel.innerHTML='';ibans.forEach((x,i)=>{const o=document.createElement('option');o.value=i;o.textContent=(x.label||'NIB '+(i+1))+' '+(x.iban||'').slice(-4);if(i===cur)o.selected=true;sel.appendChild(o);});});fillSel();ov.querySelector('#pcAdd').addEventListener('click',fillSel);
+  const sb=[...ov.querySelectorAll('button')].find(b=>b.textContent==='Guardar');sb.onclick=async(e)=>{e.stopPropagation();ov.querySelectorAll('[data-l]').forEach(i=>ibans[i.dataset.l].label=i.value.trim());ov.querySelectorAll('[data-i]').forEach(i=>ibans[i.dataset.i].iban=i.value.trim());const clean=ibans.filter(x=>x.iban);li.ibans=clean;li.iban=(clean[0]||{}).iban||li.iban||'';li.mbway=ov.querySelector('#pcMb').value.trim();
+    tl.querySelectorAll('[data-rid]').forEach(d=>{const t=state.tenants[d.dataset.rid];t.portalIban=Number(d.querySelector('select').value)||0;t.mbwayRenda=d.querySelector('[data-s="mbr"]').checked;t.cashOk=d.querySelector('[data-s="cash"]').checked;});
+    await saveState();await publishPortal(true).catch(()=>{});ov.remove();showSaveToast(true,'Pagamentos do portal guardados');};
+}
 </script>
 <nav class="bottom-nav" id="bottomNav" aria-label="Navegação principal">
   <button type="button" data-tab="hoje" class="active"><span>◎</span>Hoje</button>
@@ -10961,7 +10988,7 @@ function listen(){if(unsub)unsub();unsub=ref().onSnapshot(s=>{if(!s.exists||(s.m
 auth.onAuthStateChanged(async u=>{
   if(!u){uid=null;if(unsub){unsub();unsub=null;}setBadge('☁ Entrar');if(!LS('fb_skip'))gate.style.display='flex';return;}
   uid=u.uid;gate.style.display='none';setBadge('☁ A sincronizar…');
-  try{const r=await reconcile();window.__cloudLast=r;if(!applying){okBadge();listen();dailyBackup(snapNow(),LS('fb_seen_'+uid));checkOverdueNotify();}}catch(e){setBadge('⚠ Sem ligação');console.warn('reconcile',e);}});
+  try{const r=await reconcile();window.__cloudLast=r;if(!applying){okBadge();listen();if(typeof publishPortal==='function')publishPortal(true);dailyBackup(snapNow(),LS('fb_seen_'+uid));checkOverdueNotify();}}catch(e){setBadge('⚠ Sem ligação');console.warn('reconcile',e);}});
 window.__fb={get db(){return db;},get uid(){return uid;}};
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&timer){clearTimeout(timer);timer=null;push();}});
 const _s=saveState;saveState=async function(...a){const r=await _s.apply(this,a);if(r!==false)schedulePush();return r;};
