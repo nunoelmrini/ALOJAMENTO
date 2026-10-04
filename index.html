@@ -10587,7 +10587,7 @@ function decorateHoje(){
   const chip=(l,v,c)=>'<span style="display:inline-flex;align-items:center;gap:6px;margin:0 12px 6px 0;font-size:13px"><i style="width:11px;height:11px;border-radius:50%;background:'+c+'"></i>'+l+' <b>'+(v==null?'—':v.toFixed(0)+'%')+'</b></span>';
   const d=document.createElement('div');d.id='hojeExtras';d.style.cssText='padding:10px 12px;margin-bottom:12px;border:1px solid var(--rule,#ccc);border-radius:8px';
   d.innerHTML='<div>'+chip('Ocupação',m.occ,col(m.occ,90,75))+chip('Cobrança do mês',m.col,col(m.col,90,70))+chip('Margem do ano',m.margin,col(m.margin==null?0:m.margin,50,30))+'</div><div id="hojeBtns"></div>';
-  [['Pagar em lote',payMonthBatch],['Pagamento parcial',partialPayment],['Cobrar em atraso',collectAllOverdue],['Análise',showAnalysis],['Preço ideal',showIdealPrices],['Alterações',showChangeLog],['Testes de cálculo',showSelfTests]].forEach(([l,f])=>{const b=document.createElement('button');b.type='button';b.className='inq-filter-btn';b.textContent=l;b.onclick=f;d.querySelector('#hojeBtns').appendChild(b);});
+  [['Pagar em lote',payMonthBatch],['Cobrar em atraso',collectAllOverdue],['Fechar mês',closeMonthChecklist],['🛠 Ferramentas',openToolsMenu]].forEach(([l,f])=>{const b=document.createElement('button');b.type='button';b.className='inq-filter-btn';b.textContent=l;b.onclick=f;d.querySelector('#hojeBtns').appendChild(b);});
   host.insertBefore(d,host.firstChild);
 }
 const _rhOrig=renderHojeTab;renderHojeTab=function(){_rhOrig();try{decorateHoje();}catch(e){console.warn(e);}};
@@ -10748,6 +10748,39 @@ function decorateForecast(grid){
    (f.pend.length?'<div style="margin-top:8px;font-size:12px">'+f.pend.slice(0,6).map(p=>'<div style="display:flex;justify-content:space-between;padding:3px 0"><span>Quarto '+escapeHTML(String(p.rid))+' · '+escapeHTML(p.nome)+'</span><span>'+fmt(p.v)+'</span></div>').join('')+(f.pend.length>6?'<div style="opacity:.7">+ '+(f.pend.length-6)+' em falta</div>':'')+'</div>':'<div class="empty-note" style="margin-top:8px">Todas as rendas deste mês estão recebidas.</div>');
   grid.appendChild(c);
 }
+
+/* ===== Menu Ferramentas, Fechar mês e penalização calculada ===== */
+function clickByText(t){const b=[...document.querySelectorAll('button')].find(x=>x.textContent.trim()===t);if(b)b.click();}
+function overlayCard(title,html,btns){
+  const ov=document.createElement('div');ov.style.cssText='position:fixed;inset:0;z-index:99990;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center';
+  const b=document.createElement('div');b.style.cssText='background:#121826;color:#e8ecf5;max-width:430px;width:92%;max-height:82vh;overflow:auto;border-radius:12px;padding:16px';b.innerHTML='<h3 style="margin:0 0 10px">'+title+'</h3>'+html;
+  (btns||[]).concat([['Fechar',null]]).forEach(([l,f])=>{const x=document.createElement('button');x.type='button';x.className='inq-filter-btn';x.style.cssText='margin:8px 6px 0 0';x.textContent=l;x.onclick=()=>{ov.remove();if(f)f();};b.appendChild(x);});
+  ov.appendChild(b);ov.onclick=e=>{if(e.target===ov)ov.remove();};document.body.appendChild(ov);return ov;
+}
+function openToolsMenu(){
+  const items=[['Pagamento parcial',partialPayment],['Atualizar rendas %',()=>clickByText('Atualizar rendas %')],['Extrato por inquilino',()=>clickByText('Extrato inquilino')],['Duplicar ficha',duplicateTenantRecord],['Análise (vagas e caixa)',showAnalysis],['Preço ideal por quarto',showIdealPrices],['Alterações / desfazer',showChangeLog],['Verificar dados',showConsistency],['Testes de cálculo',showSelfTests],['Restaurar cópia automática',restoreAutoSnapshot]];
+  const ov=overlayCard('Ferramentas','<div id="toolsList"></div>');const l=ov.querySelector('#toolsList');
+  items.forEach(([t,f])=>{const b=document.createElement('button');b.type='button';b.className='inq-filter-btn';b.style.cssText='display:block;width:100%;text-align:left;margin:0 0 6px';b.textContent=t;b.onclick=()=>{ov.remove();f();};l.appendChild(b);});
+}
+function closeMonthChecks(mk){
+  const i=MONTH_KEYS.indexOf(mk),r=[],ok=(g,t)=>r.push({g,t});
+  ['baixo','cima'].forEach(h=>{const ids=state.rooms.filter(x=>x.house===h).map(x=>x.id);if(!ids.some(x=>isRentedThisMonth(mk,x,i)))return;
+    const miss=['Água','Luz','Internet'].filter(c=>!(state.expenses||[]).some(e=>e.house===h&&e.category===c&&e.monthIdx===i));
+    ok(!miss.length,'Faturas casa '+h+(miss.length?': faltam '+miss.join(', '):': água, luz e internet lançadas'));
+    const bill=houseUtilityTotal(mk,h),a=ids.reduce((q,x)=>q+(Number(autoExpenseAlloc(mk,x))||0),0);ok(bill<=0||Math.abs(a-bill)<=0.05,'Rateio casa '+h+': fatura '+fmt(bill)+' / alocado '+fmt(a));});
+  const rented=state.rooms.filter(x=>isRentedThisMonth(mk,x.id,i)),unpaid=rented.filter(x=>effectiveStatusRenda(mk,x.id)!=='Pago');ok(!unpaid.length,unpaid.length?unpaid.length+' renda(s) por receber (quartos '+unpaid.map(x=>x.id).join(', ')+')':'Todas as rendas recebidas');
+  const ym=(Number(state.managementYear)||2026)+'-'+String(i+1).padStart(2,'0'),noTx=rented.filter(x=>effectiveStatusRenda(mk,x.id)==='Pago'&&!(state.transactions||[]).some(t=>t.type==='income'&&t.category==='Renda'&&String(t.roomId)===String(x.id)&&String(t.date).slice(0,7)===ym));ok(!noTx.length,noTx.length?noTx.length+' pago(s) sem lançamento de renda':'Estados e lançamentos coerentes');
+  const bk=localStorage.getItem('livroDaCasa_lastFullBackupAt_v1'),days=bk?(Date.now()-new Date(bk))/864e5:null;ok(days!=null&&days<=35,days==null?'Sem backup completo registado':'Último backup completo há '+Math.floor(days)+' dia(s)');
+  return r;
+}
+async function closeMonthChecklist(){
+  const mk=await askMonthKey(MONTH_KEYS[currentRealMonthIndex()]);if(!mk)return;const r=closeMonthChecks(mk),bad=r.filter(x=>!x.g).length,closed=(state.closedMonths||{})[mk];
+  overlayCard('Fechar '+mk,r.map(x=>'<div style="padding:5px 0;font-size:13px">'+(x.g?'✅':'❌')+' '+escapeHTML(x.t)+'</div>').join('')+(closed?'<p style="font-size:12px;opacity:.7">Fechado em '+new Date(closed).toLocaleDateString('pt-PT')+'</p>':'')+(bad?'<p style="font-size:12px;color:#ff8a9d">'+bad+' ponto(s) por resolver.</p>':''),
+    [[closed?'Reabrir mês':'Marcar como fechado',async()=>{state.closedMonths=state.closedMonths||{};if(closed)delete state.closedMonths[mk];else state.closedMonths[mk]=new Date().toISOString();await saveState();showSaveToast(true,closed?'Mês reaberto':'Mês fechado');}]]);
+}
+{const _b=buildCobrançaMessage;buildCobrançaMessage=function(o){let m=_b(o);const pct=Number((state.landlordInfo||{}).lateFeePercent)||0;if(pct>0&&o&&o.daysLate>0&&o.val)m+='\nPenalização calculada ('+pct+'%): '+fmt(o.val*pct/100)+'.';return m;};}
+{const _c=collectAllOverdue;collectAllOverdue=async function(){await _c();const pct=Number((state.landlordInfo||{}).lateFeePercent)||0;if(!pct)return;document.querySelectorAll('div').forEach(d=>{if(d.style.zIndex==='99990'){d.querySelectorAll('span[style*="font-size:13px"]').forEach(sp=>{const m=sp.textContent.match(/EUR\s([\d.,]+)/);if(m&&/atraso/.test(sp.textContent)){const v=Number(m[1].replace('.','').replace(',','.'));if(v)sp.insertAdjacentHTML('beforeend','<br><span style="color:#ffcf6b">+ penalização '+pct+'%: '+fmt(v*pct/100)+'</span>');}});}});};}
+setTimeout(()=>{['Atualizar rendas %','Extrato inquilino','Duplicar ficha','Verificar dados','Restaurar cópia automática','Alterações / desfazer'].forEach(t=>[...document.querySelectorAll('#imovelFilters button')].filter(b=>b.textContent.trim()===t).forEach(b=>b.style.display='none'));},300);
 </script>
 <nav class="bottom-nav" id="bottomNav" aria-label="Navegação principal">
   <button type="button" data-tab="hoje" class="active"><span>◎</span>Hoje</button>
