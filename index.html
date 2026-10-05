@@ -11343,8 +11343,58 @@ const gate=document.createElement('div');gate.style.cssText='display:none;positi
 const inp='width:100%;box-sizing:border-box;padding:10px;margin-bottom:8px;border-radius:8px;border:1px solid #2a3550;background:#0a0e17;color:#fff',bt='width:100%;padding:11px;border:0;border-radius:8px;font-weight:700;cursor:pointer;margin-top:8px';
 gate.innerHTML='<div style="max-width:360px;width:90%;padding:28px;border:1px solid #2a3550;border-radius:12px;background:#121826"><h2 style="margin:0 0 8px;font-size:1.2rem">Livro da Casa</h2><p style="margin:0 0 16px;font-size:13px;opacity:.75">Inicia sessão para sincronizar na nuvem.</p><button type="button" id="fbG" style="'+bt+';background:#fff;color:#111;margin-top:0">Entrar com Google</button><input id="fbE" type="email" placeholder="E-mail" style="'+inp+';margin-top:10px"><input id="fbP" type="password" placeholder="Palavra-passe (mín. 6)" style="'+inp+'"><button type="button" id="fbL" style="'+bt+';background:#35D4FF;color:#0a0e17">Entrar</button><button type="button" id="fbC" style="'+bt+';background:transparent;border:1px solid #2a3550;color:#8a94a8;font-weight:500">Criar conta nova</button><p id="fbErr" style="color:#ff6b8a;font-size:12px;margin:10px 0 0;min-height:1.2em"></p><button type="button" id="fbS" style="'+bt+';background:transparent;border:1px solid #2a3550;color:#8a94a8;font-weight:500">Continuar sem nuvem</button></div>';
 document.body.appendChild(gate);
-const $=id=>gate.querySelector('#'+id),err=e=>{const c=(e&&e.code)||'';$('fbErr').textContent=c==='auth/unauthorized-domain'?'Domínio não autorizado: adiciona este endereço em Authentication → Settings → Authorized domains.':(c==='auth/operation-not-supported-in-this-environment'||location.protocol==='file:')?'Abre a app por endereço https (GitHub Pages / Firebase Hosting), não como ficheiro local.':(c==='auth/invalid-credential'||c==='auth/wrong-password')?'E-mail ou palavra-passe incorretos.':(e&&e.message)||String(e);};
-$('fbG').onclick=async()=>{try{$('fbErr').textContent='';await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider());}catch(e){err(e);}};
+const $=id=>gate.querySelector('#'+id);
+const err=e=>{
+  const c=(e&&e.code)||'';
+  const msg=String((e&&e.message)||e||'');
+  if(c==='auth/unauthorized-domain'){$('fbErr').textContent='Domínio não autorizado: adiciona este endereço em Authentication → Settings → Authorized domains.';return;}
+  if(c==='auth/operation-not-supported-in-this-environment'||location.protocol==='file:'){$('fbErr').textContent='Abre a app por endereço https (GitHub Pages / Firebase Hosting), não como ficheiro local.';return;}
+  if(c==='auth/invalid-credential'||c==='auth/wrong-password'||c==='auth/user-not-found'){$('fbErr').textContent='E-mail ou palavra-passe incorretos.';return;}
+  if(c==='auth/popup-closed-by-user'||c==='auth/cancelled-popup-request'){$('fbErr').textContent='Login cancelado. Tenta de novo.';return;}
+  if(c==='auth/popup-blocked'){$('fbErr').textContent='O browser bloqueou a janela. Permite pop-ups ou usa e-mail/palavra-passe.';return;}
+  /* sessionStorage / redirect state lost — comum no telemóvel, modo privado, Safari */
+  if(/missing initial state|sessionStorage|storage-partitioned|third-party cookie/i.test(msg)||c==='auth/missing-initial-state'){
+    $('fbErr').textContent='O browser perdeu o estado do login (comum no telemóvel). Soluções: 1) Usa e-mail e palavra-passe abaixo. 2) Abre em Chrome/Safari normal (não privado). 3) Fecha separadores desta app e tenta de novo.';
+    return;
+  }
+  $('fbErr').textContent=msg||String(e);
+};
+/* Completar login Google se veio de redirect (telemóvel) */
+auth.getRedirectResult().then(res=>{
+  if(res&&res.user){/* onAuthStateChanged trata a sessão */}
+}).catch(e=>{
+  const msg=String((e&&e.message)||'');
+  if(/missing initial state/i.test(msg)){
+    try{sessionStorage.clear();}catch(_){}
+    console.warn('Firebase redirect state em falta — usa e-mail/palavra-passe ou tenta de novo.',e);
+  }
+});
+function isMobileAuth(){
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent||'')||(window.matchMedia&&window.matchMedia('(max-width:900px)').matches);
+}
+$('fbG').onclick=async()=>{
+  try{
+    $('fbErr').textContent='';
+    const provider=new firebase.auth.GoogleAuthProvider();
+    provider.setCustomParameters({prompt:'select_account'});
+    /* No telemóvel o popup falha muitas vezes → redirect; no desktop tenta popup e cai para redirect se necessário */
+    if(isMobileAuth()){
+      await auth.signInWithRedirect(provider);
+      return;
+    }
+    try{
+      await auth.signInWithPopup(provider);
+    }catch(popErr){
+      const c=(popErr&&popErr.code)||'';
+      if(c==='auth/popup-blocked'||c==='auth/operation-not-supported-in-this-environment'||/missing initial state|storage/i.test(String(popErr&&popErr.message||''))){
+        $('fbErr').textContent='A redirecionar para o Google…';
+        await auth.signInWithRedirect(provider);
+        return;
+      }
+      throw popErr;
+    }
+  }catch(e){err(e);}
+};
 $('fbL').onclick=async()=>{try{$('fbErr').textContent='';await auth.signInWithEmailAndPassword($('fbE').value.trim(),$('fbP').value);}catch(e){err(e);}};
 $('fbC').onclick=async()=>{try{$('fbErr').textContent='';if($('fbP').value.length<6){$('fbErr').textContent='Palavra-passe: mínimo 6 caracteres.';return;}await auth.createUserWithEmailAndPassword($('fbE').value.trim(),$('fbP').value);}catch(e){err(e);}};
 $('fbS').onclick=()=>{LS('fb_skip','1');gate.style.display='none';};
