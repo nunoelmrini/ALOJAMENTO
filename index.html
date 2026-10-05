@@ -4038,15 +4038,14 @@ async function saveStateInternal() {
      }
    } catch (_) { /* ignore estimate errors */ }
 
-    // Estado principal → IndexedDB; localStorage fica como espelho leve / compatibilidade
-    try { await idbSet(IDB_KEY_MAIN, serialized); } catch (idbErr) { console.warn('IDB save:', idbErr); }
+    // P10 — IDB é a fonte de verdade (obrigatório); localStorage é espelho best-effort
+    await idbSet(IDB_KEY_MAIN, serialized);
     try {
       localStorage.setItem(STORE_KEY, serialized);
       localStorage.setItem('livroDaCasa_meta_v1', JSON.stringify({ savedAt: new Date().toISOString(), bytes: serialized.length }));
     } catch (lsErr) {
-      // Se localStorage falhar mas IDB ok, continua
-      console.warn('localStorage espelho falhou; dados no IndexedDB.', lsErr);
-      if (!(await idbGet(IDB_KEY_MAIN))) throw lsErr;
+      console.warn('[quota] localStorage espelho falhou; IDB OK.', lsErr);
+      // Não propagar — dados estão seguros no IndexedDB
     }
 
     if (fileHandle) {
@@ -5000,6 +4999,8 @@ function getPropertyExpensePanelItems(monthIdx) {
 }
 
 async function markPropertyExpensePaid(itemKey,monthIdx) {
+ const lockKey = `propExp::${itemKey}::${monthIdx}`;
+ return withLock(lockKey, async () => {
  const key=String(itemKey),isModel=key.startsWith('model:'),modelId=isModel?key.slice(6):'';
  let expense=(state.expenses||[]).find(e=>String(e.id)===key),createExpense=false;
  if(isModel){
@@ -5019,6 +5020,7 @@ async function markPropertyExpensePaid(itemKey,monthIdx) {
  (state.transactions||(state.transactions=[])).push({id:txId,date:`${year}-${String(Number(monthIdx)+1).padStart(2,'0')}-01`,type:'expense',roomId:'',category:expense.category||'Outras',house:expense.house||'geral',method:'Registado no painel',notes:'Despesa do imóvel marcada como paga no painel (data real não indicada)',amount,expenseId:expense.id,propertyId:store.currentId,source:'panel_fixed_expense'});
  if(!await saveState()){state=before;store.properties[store.currentId].data=state;return false;}
  renderDespesasTab();return true;
+ });
 }
 
 const RENDA_STATUS_OPTIONS = ['Pago','Não Pago','Em Espera','CAUÇÃO'];
@@ -7359,7 +7361,22 @@ document.getElementById('importFile').addEventListener('change', (e) => {
 function featureId(prefix) { return prefix + '_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,8); }
 function localDateString(d=new Date()) { const x=new Date(d.getTime()-d.getTimezoneOffset()*60000); return x.toISOString().slice(0,10); }
 function panelStatusRef(kind,rid,mk){return `${Number(state.managementYear)||2026}|${mk}|${String(rid)}|${kind}`;}
+/* P04 — mutex por chave para evitar race em cliques rápidos */
+const _pendingMutations = new Map();
+async function withLock(key, fn) {
+  while (_pendingMutations.has(key)) {
+    await _pendingMutations.get(key);
+  }
+  let release;
+  const lock = new Promise(r => { release = r; });
+  _pendingMutations.set(key, lock);
+  try { return await fn(); }
+  finally { _pendingMutations.delete(key); release(); }
+}
+
 async function setPanelPaymentStatus(kind,rid,value,mk,opts){
+  const lockKey = `${kind}::${mk}::${rid}`;
+  return withLock(lockKey, async () => {
   const key=ovKey(mk,rid),ref=panelStatusRef(kind,rid,mk),linked=(state.transactions||[]).filter(t=>t.statusRef===ref);
   const statusMap=kind==='despesas'?state.despesasOverrides:state.overrides;
   const stateBefore=JSON.parse(JSON.stringify(state));
@@ -7378,6 +7395,7 @@ async function setPanelPaymentStatus(kind,rid,value,mk,opts){
   // Sincronizar Hoje ↔ Painel ↔ Visão anual (e caixa se estiver aberta)
   try { refreshAfterPaymentChange(); } catch (e) { console.warn('refreshAfterPaymentChange', e); }
   return true;
+  });
 }
 
 /**
@@ -8129,13 +8147,14 @@ document.getElementById('saveTenantModalBtn').onclick = async () => {
 };
 
 function escapeHTML(str) {
- if (!str) return "";
+ if (str == null || str === '') return "";
  return String(str)
    .replace(/&/g, "&amp;")
    .replace(/</g, "&lt;")
    .replace(/>/g, "&gt;")
    .replace(/"/g, "&quot;")
-   .replace(/'/g, "&#039;");
+   .replace(/'/g, "&#039;")
+   .replace(/`/g, "&#96;");
 }
 
 function fmtDateLong(d) {
@@ -9546,7 +9565,8 @@ async function markDebtPaidFromHoje(rid, mk, kind) {
   if (_d === null) return;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(_d).trim()) || Number(String(_d).slice(0, 4)) !== _y) _d = _y + '-' + String(_mi).padStart(2, '0') + '-01';
   const _m = await customPromptDialog('Método (Transferência / Dinheiro / MB Way):', 'Transferência', 'Método de pagamento');
-  if (!await setPanelPaymentStatus(kind, rid, 'Pago', mk, { date: String(_d).trim(), method: (_m || 'Transferência').trim() })) return;
+  if (_m === null) return; // utilizador cancelou → abortar
+  if (!await setPanelPaymentStatus(kind, rid, 'Pago', mk, { date: String(_d).trim(), method: String(_m).trim() || 'Transferência' })) return;
   if (kind === 'renda') {
     const t0 = state.tenants[rid];
     if (t0 && t0.data_inicio) {
@@ -10570,8 +10590,6 @@ renderContractAlerts=function(){
   [['Extrato inquilino',async()=>{const r=await customPromptDialog('Número do quarto:','','Extrato por inquilino');if(r&&state.tenants[r.trim()])openTenantStatement(r.trim());else if(r!==null)await customAlert('Quarto inválido.');}],
    ['Duplicar ficha',duplicateTenantRecord],['Verificar dados',showConsistency],['Restaurar cópia automática',restoreAutoSnapshot]].forEach(([l,f])=>{const b=document.createElement('button');b.type='button';b.className='inq-filter-btn';b.textContent=l;b.onclick=f;bar.appendChild(b);});
 })();
-setTimeout(async()=>{try{await autoSnapshot();const r=runConsistencyCheck();if(r.serious.length)await customAlert(r.serious.join('\n'),'Possíveis inconsistências nos dados');
-  const last=localStorage.getItem('livroDaCasa_lastFullBackupAt_v1'),day=todayISO();if((!last||Date.now()-new Date(last)>7*864e5)&&localStorage.getItem('livroDaCasa_bkRemind')!==day){localStorage.setItem('livroDaCasa_bkRemind',day);showSaveToast(false,'Faz um BACKUP COMPLETO (há mais de 7 dias)');}}catch(e){console.warn(e);}},5000);
 setInterval(autoSnapshot,15*60*1000);
 
 /* ===== Hoje: semáforo, pagamento em lote, parcial, testes e análise ===== */
@@ -10587,7 +10605,8 @@ function decorateHoje(){
   const chip=(l,v,c)=>'<span style="display:inline-flex;align-items:center;gap:6px;margin:0 12px 6px 0;font-size:13px"><i style="width:11px;height:11px;border-radius:50%;background:'+c+'"></i>'+l+' <b>'+(v==null?'—':v.toFixed(0)+'%')+'</b></span>';
   const d=document.createElement('div');d.id='hojeExtras';d.style.cssText='padding:10px 12px;margin-bottom:12px;border:1px solid var(--rule,#ccc);border-radius:8px';
   d.innerHTML='<div>'+chip('Ocupação',m.occ,col(m.occ,90,75))+chip('Cobrança do mês',m.col,col(m.col,90,70))+chip('Margem do ano',m.margin,col(m.margin==null?0:m.margin,50,30))+'</div><div id="hojeBtns"></div>';
-  [['Pagar em lote',payMonthBatch],['Cobrar em atraso',collectAllOverdue],['Fechar mês',closeMonthChecklist],['🛠 Ferramentas',openToolsMenu]].forEach(([l,f])=>{const b=document.createElement('button');b.type='button';b.className='inq-filter-btn';b.textContent=l;b.onclick=f;d.querySelector('#hojeBtns').appendChild(b);});
+  /* wrapper P03 — não usar referência directa a funções reatribuídas */
+  [['Pagar em lote',()=>payMonthBatch()],['Cobrar em atraso',()=>collectAllOverdue()],['Fechar mês',()=>closeMonthChecklist()],['🛠 Ferramentas',()=>openToolsMenu()]].forEach(([l,f])=>{const b=document.createElement('button');b.type='button';b.className='inq-filter-btn';b.textContent=l;b.onclick=f;d.querySelector('#hojeBtns').appendChild(b);});
   host.insertBefore(d,host.firstChild);
 }
 const _rhOrig=renderHojeTab;renderHojeTab=function(){_rhOrig();try{decorateHoje();}catch(e){console.warn(e);}};
@@ -10595,17 +10614,27 @@ async function askMonthKey(def){const v=await customPromptDialog('Mês ('+MONTH_
 async function payMonthBatch(){
   const mk=await askMonthKey(MONTH_KEYS[currentRealMonthIndex()]);if(!mk)return;const i=MONTH_KEYS.indexOf(mk),ids=state.rooms.map(r=>r.id).filter(r=>isRentedThisMonth(mk,r,i)&&effectiveStatusRenda(mk,r)!=='Pago');
   if(!ids.length){await customAlert('Todas as rendas deste mês já estão pagas.');return;}
-  const date=await customPromptDialog('Data do pagamento (AAAA-MM-DD):',todayISO(),'Pagar em lote');if(date===null)return;const meth=(await customPromptDialog('Método:','Transferência','Pagar em lote'))||'Transferência';
+  const date=await customPromptDialog('Data do pagamento (AAAA-MM-DD):',todayISO(),'Pagar em lote');if(date===null)return;
+  const methRaw=await customPromptDialog('Método:','Transferência','Pagar em lote');if(methRaw===null)return;
+  const meth=String(methRaw).trim()||'Transferência';
   if(!await customConfirm('Marcar como PAGAS as rendas de '+mk+' dos quartos: '+ids.join(', ')+'?','Pagar em lote'))return;
-  let n=0;for(const r of ids){if(await setPanelPaymentStatus('renda',r,'Pago',mk,{date:String(date).trim(),method:meth.trim()}))n++;}showSaveToast(true,n+' renda(s) marcadas como pagas');
+  let n=0;for(const r of ids){if(await setPanelPaymentStatus('renda',r,'Pago',mk,{date:String(date).trim(),method:meth}))n++;}showSaveToast(true,n+' renda(s) marcadas como pagas');
 }
 async function partialPayment(){
-  const rid=(await customPromptDialog('Quarto:','','Pagamento parcial'));if(!rid||!state.tenants[rid.trim()])return;const r=rid.trim();
-  const mk=await askMonthKey(MONTH_KEYS[currentRealMonthIndex()]);if(!mk)return;const i=MONTH_KEYS.indexOf(mk),year=Number(state.managementYear)||2026,ym=year+'-'+String(i+1).padStart(2,'0');
+  const ridRaw=await customPromptDialog('Quarto:','','Pagamento parcial');
+  if(ridRaw===null)return;
+  if(!ridRaw||!state.tenants[String(ridRaw).trim()])return;
+  const r=String(ridRaw).trim();
+  const mk=await askMonthKey(MONTH_KEYS[currentRealMonthIndex()]);if(!mk)return;
+  const i=MONTH_KEYS.indexOf(mk),year=Number(state.managementYear)||2026,ym=year+'-'+String(i+1).padStart(2,'0');
   if(effectiveStatusRenda(mk,r)==='Pago'){await customAlert('Esta renda já está paga.');return;}
-  const amt=Number(String(await customPromptDialog('Valor recebido (€):','','Pagamento parcial')).replace(',','.'));if(!(amt>0)){return;}
-  const date=(await customPromptDialog('Data (AAAA-MM-DD):',todayISO(),'Pagamento parcial'))||todayISO();
-  state.transactions.push({id:featureId('tx'),date:/^\d{4}-\d{2}-\d{2}$/.test(date.trim())&&date.slice(0,4)==String(year)?date.trim():ym+'-01',type:'income',roomId:r,category:'Renda',method:'Pagamento parcial',notes:'Pagamento parcial/prestação',amount:Math.round(amt*100)/100,propertyId:store.currentId,source:'partial'});
+  const amtRaw=await customPromptDialog('Valor recebido (€):','','Pagamento parcial');
+  if(amtRaw===null)return;
+  const amt=Number(String(amtRaw).replace(',','.'));if(!(amt>0)){return;}
+  const dateRaw=await customPromptDialog('Data (AAAA-MM-DD):',todayISO(),'Pagamento parcial');
+  if(dateRaw===null)return;
+  const date=String(dateRaw).trim()||todayISO();
+  state.transactions.push({id:featureId('tx'),date:/^\d{4}-\d{2}-\d{2}$/.test(date)&&date.slice(0,4)==String(year)?date:ym+'-01',type:'income',roomId:r,category:'Renda',method:'Pagamento parcial',notes:'Pagamento parcial/prestação',amount:Math.round(amt*100)/100,propertyId:store.currentId,source:'partial'});
   const paid=state.transactions.filter(t=>t.type==='income'&&t.category==='Renda'&&String(t.roomId)===r&&String(t.date).slice(0,7)===ym).reduce((a,t)=>a+(Number(t.amount)||0),0),due=Number(effectiveTotalPagar(mk,r))||0;
   if(paid>=due-0.005){await setPanelPaymentStatus('renda',r,'Pago',mk);}else{await saveState();renderHojeTab();}
   showSaveToast(true,paid>=due-0.005?'Renda liquidada':'Parcial registado · em falta '+fmt(due-paid));
@@ -10705,7 +10734,7 @@ async function backfillPaidRentTx(){
     if(tx.some(t=>t.type==='income'&&t.category==='Renda'&&String(t.roomId)===String(r.id)&&String(t.date).slice(0,7)===ym))return;const v=Number(effectiveTotalPagar(mk,r.id))||0;if(v>0)add.push({id:featureId('tx'),date:ym+'-01',type:'income',roomId:String(r.id),category:'Renda',amount:v,method:'Histórico (estado Pago)',notes:'Criado automaticamente: mês marcado como pago com contrato ativo',propertyId:store.currentId,source:'backfill'});});});
   try{await autoSnapshot();}catch(e){}state.transactions=tx.concat(add);state.backfillPaidRentV1=true;await saveState();return add.length;
 }
-setTimeout(async()=>{try{const n=await backfillPaidRentTx();if(n)await customAlert(n+' lançamento(s) de renda em falta foram criados a partir dos meses já marcados como pagos (contratos ativos). Foi guardada uma cópia antes; podes desfazer em "Alterações".','Histórico sincronizado');}catch(e){console.warn('backfill',e);}},8000);
+/* backfill moved to bootstrapTasks (P05) */
 /* ===== Cobrar em atraso: lista com WhatsApp por inquilino ===== */
 collectAllOverdue=async function(){
   const year=Number(state.managementYear)||2026,cur=currentRealMonthIndex(),rows=[];
@@ -10732,7 +10761,40 @@ function syncAutoReminders(){
   const keep=state.reminders.filter(r=>!(r.auto&&!r.resolved&&!(r.autoKey in want)));if(keep.length!==state.reminders.length){state.reminders=keep;ch=true;}return ch;
 }
 async function runAutoReminders(){try{if(syncAutoReminders()){await saveState();if(typeof renderReminders==='function')renderReminders();if(typeof renderHojeTab==='function')renderHojeTab();}}catch(e){console.warn('lembretes auto',e);}}
-setTimeout(runAutoReminders,4500);setInterval(runAutoReminders,3600000);
+setInterval(runAutoReminders,3600000);
+/* P05 — bootstrap sequencial: um diálogo de cada vez */
+async function bootstrapTasks() {
+  const tasks = [
+    { name: 'lembretes', fn: runAutoReminders },
+    { name: 'snapshot', fn: async () => {
+      await autoSnapshot();
+      const r = runConsistencyCheck();
+      if (r.serious && r.serious.length) return { alert: r.serious.join('\n'), title: 'Possíveis inconsistências nos dados' };
+      const last = localStorage.getItem('livroDaCasa_lastFullBackupAt_v1'), day = todayISO();
+      if ((!last || Date.now() - new Date(last) > 7 * 864e5) && localStorage.getItem('livroDaCasa_bkRemind') !== day) {
+        localStorage.setItem('livroDaCasa_bkRemind', day);
+        if (typeof showSaveToast === 'function') showSaveToast(false, 'Faz um BACKUP COMPLETO (há mais de 7 dias)');
+      }
+      return null;
+    }},
+    { name: 'backfill', fn: async () => {
+      const n = await backfillPaidRentTx();
+      if (n) return { alert: n + ' lançamento(s) de renda em falta foram criados a partir dos meses já marcados como pagos (contratos ativos). Foi guardada uma cópia antes; podes desfazer em "Alterações".', title: 'Histórico sincronizado' };
+      return null;
+    }},
+  ];
+  for (const t of tasks) {
+    try {
+      const r = await t.fn();
+      if (r && r.alert) await customAlert(r.alert, r.title || 'Correção automática');
+      await new Promise(res => setTimeout(res, 400));
+    } catch (e) {
+      console.warn('[bootstrap] ' + t.name + ' falhou:', e);
+    }
+  }
+  window.__bootDone = true;
+}
+setTimeout(bootstrapTasks, 4500);
 function monthForecast(){
   const i=currentRealMonthIndex(),mk=MONTH_KEYS[i];let exp=0,rec=0;const pend=[];
   state.rooms.forEach(r=>{if(!isRentedThisMonth(mk,r.id,i))return;const v=Number(effectiveTotalPagar(mk,r.id))||0;exp+=v;if(effectiveStatusRenda(mk,r.id)==='Pago')rec+=v;else pend.push({rid:r.id,nome:(state.tenants[r.id]||{}).nome||'',v});});
@@ -11026,6 +11088,35 @@ function fichaExtras(rid){
   d.innerHTML='<b>🧹 Limpeza</b><br>Dias: '+(dias.join(', ')||'sem dias atribuídos')+' · últimos 3 meses: <b>'+f+'/'+days.length+'</b><br>'+(last.map(x=>'<small>'+fd(x.data)+' '+(x.feito?'✅':'❌')+'</small>').join(' · ')||'<small>Sem registos</small>')+'<br><br><b>📅 Pedidos e reservas</b>'+(rs.length?rs.map(x=>'<div><small>'+escapeHTML(x.tipo)+' · '+(x.data?fd(x.data):'sem data')+' · '+escapeHTML(x.estado)+'</small></div>').join(''):'<br><small>Sem pedidos.</small>')+'<br><small>Gerir em 🛠 Ferramentas → Limpeza da casa / Pedidos e reservas.</small>';
 }
 {const _otm=openTenantModal;openTenantModal=function(rid){const r=_otm.apply(this,arguments);try{fichaExtras(rid);}catch(e){console.warn('ficha extras',e);}return r;};}
+
+/* P02 — soft reload from cloud without location.reload */
+window.__cloudReload = async function(remote) {
+  try {
+    const raw = remote && (remote.payload || (remote.store ? JSON.stringify(remote.store) : null));
+    if (!raw) throw new Error('payload vazio');
+    const j = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (!isStoreEnvelopeUsable(j)) throw new Error('estrutura inválida');
+    store = j;
+    Object.values(store.properties).forEach(p => { p.data = normalizeState(p.data); });
+    const cur = store.properties[store.currentId];
+    if (!cur) throw new Error('currentId inválido');
+    state = cur.data;
+    try {
+      if (typeof renderPropertySelector === 'function') renderPropertySelector();
+      if (typeof rerenderActiveTab === 'function') rerenderActiveTab();
+    } catch (uiErr) {
+      console.warn('[cloudReload] UI', uiErr);
+      location.reload();
+      return false;
+    }
+    if (typeof showSaveToast === 'function') showSaveToast(true, 'Dados atualizados de outro dispositivo');
+    return true;
+  } catch (e) {
+    console.warn('[cloudReload] fallback reload', e);
+    location.reload();
+    return false;
+  }
+};
 </script>
 <nav class="bottom-nav" id="bottomNav" aria-label="Navegação principal">
   <button type="button" data-tab="hoje" class="active"><span>◎</span>Hoje</button>
@@ -11076,8 +11167,22 @@ badge.onclick=async()=>{if(!uid){LS('fb_skip','');gate.style.display='flex';retu
   const v=await customPromptDialog('1 = Verificar gravação na nuvem\n2 = Restaurar cópia diária da nuvem\n3 = Ativar avisos de rendas em atraso\n4 = Terminar sessão','1','Nuvem');
   try{if(v==='1')await verifyCloud();else if(v==='2')await restoreCloudBackup();else if(v==='3'){if(!('Notification' in window))await customAlert('Este navegador não suporta notificações.');else if(await Notification.requestPermission()==='granted'){LS('fb_notif_day','');checkOverdueNotify();await customAlert('Avisos ativados: recebes um aviso por dia, com a app aberta, se houver rendas em atraso.');}}else if(v==='4'&&await ask('Terminar sessão na nuvem? Os dados ficam neste dispositivo.','Sair'))auth.signOut();}catch(e){await customAlert('Erro: '+(e.message||e));}};
 async function applyRemote(d){const raw=rawOf(d);try{const j=JSON.parse(raw);if(!j||!j.properties)throw 0;}catch(e){alert('Dados da nuvem inválidos — nada foi alterado.');return false;}
-  applying=true;try{await autoSnapshot();}catch(e){}await idbSet(IDB_KEY_MAIN,raw);try{localStorage.setItem(STORE_KEY,raw);}catch(e){}
-  LS('fb_seen_'+uid,d.rev||'legacy');LS('fb_dirty_'+uid,'0');(window.__cloudReload||(()=>location.reload()))();return true;}
+  applying=true;
+  try{
+    try{await autoSnapshot();}catch(e){}
+    await idbSet(IDB_KEY_MAIN,raw);
+    try{localStorage.setItem(STORE_KEY,raw);}catch(e){}
+    LS('fb_seen_'+uid,d.rev||'legacy');LS('fb_dirty_'+uid,'0');
+    if(typeof window.__cloudReload==='function'){
+      await window.__cloudReload({payload:raw,rev:d.rev});
+    }else{
+      location.reload();
+    }
+    return true;
+  }finally{
+    applying=false;
+  }
+}
 async function push(){if(!uid||applying)return;const raw=snapNow();if(!raw)return;if(raw.length>900000){setBadge('⚠ Dados grandes demais');return;}
   const rev=Date.now()+'-'+dev,prev=LS('fb_seen_'+uid)||'';LS('fb_seen_'+uid,rev);
   try{await ref().set({payload:raw,rev,updatedAt:new Date().toISOString(),device:dev});LS('fb_dirty_'+uid,'0');okBadge();dailyBackup(raw,rev);}catch(e){LS('fb_seen_'+uid,prev);setBadge('⚠ Sem ligação');console.warn('push',e);}}
