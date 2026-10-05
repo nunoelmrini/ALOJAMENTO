@@ -10984,7 +10984,80 @@ async function uploadPhotos(target,house,files){
   if(target.startsWith('H:')){const h=target.slice(2);sh.houses[h]=sh.houses[h]||{};list=sh.houses[h].fotos=sh.houses[h].fotos||[];}else{sh.rooms[target]=sh.rooms[target]||{};list=sh.rooms[target].fotos=sh.rooms[target].fotos||[];}
   let n=0;for(const f of files){const d=await compressImage(f,1000,0.72),id='p'+Date.now().toString(36)+Math.random().toString(36).slice(2,5);await F.db.collection('publicPhotos').doc(id).set({target:String(target),house,data:d,at:new Date().toISOString()});list.push(id);n++;}await saveState();return n;
 }
-async function deletePhoto(target,id){const F=window.__fb,sh=SH(),o=target.startsWith('H:')?(sh.houses[target.slice(2)]||{}):(sh.rooms[target]||{});o.fotos=(o.fotos||[]).filter(x=>x!==id);try{await F.db.collection('publicPhotos').doc(id).delete();}catch(e){}await saveState();}
+async function deletePhoto(target,id){
+  const F=window.__fb,sh=SH();
+  let o;
+  if(target.startsWith('H:')){const h=target.slice(2);sh.houses[h]=sh.houses[h]||{};o=sh.houses[h];}
+  else{sh.rooms[target]=sh.rooms[target]||{};o=sh.rooms[target];}
+  o.fotos=(o.fotos||[]).filter(x=>x!==id);
+  try{if(F&&F.db)await F.db.collection('publicPhotos').doc(id).delete();}catch(e){console.warn('deletePhoto firestore',e);}
+  await saveState();
+}
+/** Miniatura com botão apagar — montra */
+function photoThumbEl(target,id,dataUrl,onDeleted){
+  const wrap=document.createElement('div');
+  wrap.style.cssText='position:relative;display:inline-block;margin:4px 6px 4px 0;vertical-align:top';
+  wrap.dataset.photoId=id;
+  const img=document.createElement('img');
+  img.src=dataUrl||'';
+  img.alt='Foto';
+  img.style.cssText='height:88px;width:auto;max-width:140px;object-fit:cover;border-radius:8px;display:block;background:#1a2233';
+  const btn=document.createElement('button');
+  btn.type='button';
+  btn.textContent='✕';
+  btn.title='Apagar esta foto';
+  btn.style.cssText='position:absolute;top:4px;right:4px;width:26px;height:26px;border:0;border-radius:50%;background:rgba(0,0,0,.72);color:#fff;font-size:14px;cursor:pointer;line-height:1';
+  btn.onclick=async(e)=>{
+    e.preventDefault();e.stopPropagation();
+    if(!await customConfirm('Apagar esta foto? Deixa de aparecer na montra.','Apagar foto'))return;
+    btn.disabled=true;
+    try{
+      await deletePhoto(target,id);
+      wrap.remove();
+      if(typeof onDeleted==='function')onDeleted(id);
+      if(typeof showSaveToast==='function')showSaveToast(true,'Foto apagada');
+    }catch(err){
+      btn.disabled=false;
+      await customAlert('Não foi possível apagar: '+(err.message||err));
+    }
+  };
+  wrap.appendChild(img);wrap.appendChild(btn);return wrap;
+}
+async function fillPhotoGallery(galleryEl,target,ids){
+  if(!galleryEl)return;
+  galleryEl.innerHTML='';
+  const F=window.__fb;
+  const list=Array.isArray(ids)?ids.slice():[];
+  if(!list.length){
+    galleryEl.innerHTML='<span style="font-size:11px;opacity:.65">Sem fotos. Usa «📷 Adicionar».</span>';
+    return;
+  }
+  if(!F||!F.db){
+    galleryEl.innerHTML='<span style="font-size:11px;opacity:.65">'+list.length+' foto(s) (entra na nuvem para pré-visualizar/apagar)</span>';
+    return;
+  }
+  for(const id of list){
+    try{
+      const snap=await F.db.collection('publicPhotos').doc(id).get();
+      if(!snap.exists){
+        /* id órfão — remove da lista local */
+        await deletePhoto(target,id);
+        continue;
+      }
+      const data=snap.data().data;
+      galleryEl.appendChild(photoThumbEl(target,id,data,()=>{
+        const parent=galleryEl.parentElement;
+        const cnt=parent&&parent.querySelector('[data-photo-count="'+cssEscape(target)+'"]');
+        const left=galleryEl.querySelectorAll('[data-photo-id]').length;
+        if(cnt)cnt.textContent=left+' foto(s)';
+        if(!left)galleryEl.innerHTML='<span style="font-size:11px;opacity:.65">Sem fotos. Usa «📷 Adicionar».</span>';
+      }));
+    }catch(e){console.warn('fillPhotoGallery',id,e);}
+  }
+  if(!galleryEl.querySelector('[data-photo-id]')){
+    galleryEl.innerHTML='<span style="font-size:11px;opacity:.65">Sem fotos. Usa «📷 Adicionar».</span>';
+  }
+}
 async function publishShowcase(){
   const F=window.__fb;if(!F||!F.uid){await customAlert('Entra primeiro na nuvem (botão ☁ no topo).');return -1;}const sh=SH(),rooms=[];
   state.rooms.forEach(r=>{const ro=sh.rooms[r.id];if(!ro||!ro.publish)return;const t=state.tenants[r.id]||{},vago=currentAutoStatus(r.id)==='vago',du=t.data_final?daysUntil(t.data_final):null;
@@ -10994,13 +11067,47 @@ async function publishShowcase(){
 }
 async function openShowcaseEditor(){
   const sh=SH(),inp='width:100%;box-sizing:border-box;padding:6px;margin:3px 0;border-radius:6px;border:1px solid #2a3550;background:#0a0e17;color:#fff;font-size:12px';
-  let h='<p style="font-size:12px;opacity:.75;margin:0 0 8px">Só publica o que marcares. Nunca são enviados nomes, rendas pagas nem dados pessoais.</p><label style="font-size:12px">WhatsApp de contacto (com indicativo)</label><input id="shWa" style="'+inp+'" value="'+escapeHTML(sh.whatsapp||'')+'">';
-  ['baixo','cima'].forEach(k=>{const x=sh.houses[k]||{};h+='<div style="border-top:1px solid #2a3550;margin-top:10px;padding-top:8px"><b>Casa '+k+'</b><input data-h="'+k+'" data-f="nome" placeholder="Nome público" style="'+inp+'" value="'+escapeHTML(x.nome||'')+'"><input data-h="'+k+'" data-f="zona" placeholder="Zona / morada aproximada" style="'+inp+'" value="'+escapeHTML(x.zona||'')+'"><textarea data-h="'+k+'" data-f="desc" placeholder="Descrição da casa, cozinha, áreas comuns" style="'+inp+'">'+escapeHTML(x.desc||'')+'</textarea><textarea data-h="'+k+'" data-f="regras" placeholder="Regras da casa" style="'+inp+'">'+escapeHTML(x.regras||'')+'</textarea>'+[['lavandaria','Lavandaria (máquinas, horários)'],['cozinha','Cozinha (equipamento, utilização)'],['estac','Estacionamento'],['chaves','Chaves (cópias, perda)'],['seguranca','Segurança (alarme, câmaras, portão)']].map(([f,ph])=>'<textarea data-h="'+k+'" data-f="'+f+'" placeholder="'+ph+'" style="'+inp+'">'+escapeHTML(x[f]||'')+'</textarea>').join('')+'<label class="inq-filter-btn" style="display:inline-block;margin:4px 0">📷 Fotos da casa <input type="file" accept="image/*" multiple hidden data-photo="H:'+k+'" data-house="'+k+'"></label> <span style="font-size:11px">'+((x.fotos||[]).length)+' foto(s)</span></div>';});
-  state.rooms.forEach(r=>{const o=sh.rooms[r.id]||{};h+='<div style="border-top:1px solid #2a3550;margin-top:10px;padding-top:8px"><label><input type="checkbox" data-r="'+r.id+'" data-f="publish" '+(o.publish?'checked':'')+'> <b>Quarto '+escapeHTML(String(r.id))+'</b> ('+escapeHTML(r.house||'')+')</label><input data-r="'+r.id+'" data-f="preco" type="number" placeholder="Preço € / mês" style="'+inp+'" value="'+(o.preco||'')+'"><input data-r="'+r.id+'" data-f="caucao" type="number" placeholder="Caução €" style="'+inp+'" value="'+(o.caucao||'')+'"><input data-r="'+r.id+'" data-f="area" placeholder="Área (m²)" style="'+inp+'" value="'+escapeHTML(o.area||'')+'"><input data-r="'+r.id+'" data-f="cama" placeholder="Cama (solteiro/casal)" style="'+inp+'" value="'+escapeHTML(o.cama||'')+'"><input data-r="'+r.id+'" data-f="wc" placeholder="Casa de banho (privada/partilhada)" style="'+inp+'" value="'+escapeHTML(o.wc||'')+'"><textarea data-r="'+r.id+'" data-f="desc" placeholder="Descrição, mobília, despesas incluídas" style="'+inp+'">'+escapeHTML(o.desc||'')+'</textarea><label class="inq-filter-btn" style="display:inline-block;margin:4px 0">📷 Fotos <input type="file" accept="image/*" multiple hidden data-photo="'+r.id+'" data-house="'+escapeHTML(r.house||'')+'"></label> <span style="font-size:11px">'+((o.fotos||[]).length)+' foto(s)</span></div>';});
+  const photoBlock=(target,house,fotos)=>'<div style="margin-top:6px"><label class="inq-filter-btn" style="display:inline-block;margin:4px 0">📷 Adicionar fotos <input type="file" accept="image/*" multiple hidden data-photo="'+escapeHTML(String(target))+'" data-house="'+escapeHTML(String(house||''))+'"></label> <span data-photo-count="'+escapeHTML(String(target))+'" style="font-size:11px">'+((fotos||[]).length)+' foto(s)</span><div data-photo-gallery="'+escapeHTML(String(target))+'" style="margin-top:6px;min-height:24px"></div></div>';
+  let h='<p style="font-size:12px;opacity:.75;margin:0 0 8px">Só publica o que marcares. Nunca são enviados nomes, rendas pagas nem dados pessoais.<br>Podes <b>pré-visualizar e apagar</b> fotos com o botão ✕ em cada miniatura.</p><label style="font-size:12px">WhatsApp de contacto (com indicativo)</label><input id="shWa" style="'+inp+'" value="'+escapeHTML(sh.whatsapp||'')+'">';
+  ['baixo','cima'].forEach(k=>{const x=sh.houses[k]||{};h+='<div style="border-top:1px solid #2a3550;margin-top:10px;padding-top:8px"><b>Casa '+k+'</b><input data-h="'+k+'" data-f="nome" placeholder="Nome público" style="'+inp+'" value="'+escapeHTML(x.nome||'')+'"><input data-h="'+k+'" data-f="zona" placeholder="Zona / morada aproximada" style="'+inp+'" value="'+escapeHTML(x.zona||'')+'"><textarea data-h="'+k+'" data-f="desc" placeholder="Descrição da casa, cozinha, áreas comuns" style="'+inp+'">'+escapeHTML(x.desc||'')+'</textarea><textarea data-h="'+k+'" data-f="regras" placeholder="Regras da casa" style="'+inp+'">'+escapeHTML(x.regras||'')+'</textarea>'+[['lavandaria','Lavandaria (máquinas, horários)'],['cozinha','Cozinha (equipamento, utilização)'],['estac','Estacionamento'],['chaves','Chaves (cópias, perda)'],['seguranca','Segurança (alarme, câmaras, portão)']].map(([f,ph])=>'<textarea data-h="'+k+'" data-f="'+f+'" placeholder="'+ph+'" style="'+inp+'">'+escapeHTML(x[f]||'')+'</textarea>').join('')+photoBlock('H:'+k,k,x.fotos)+'</div>';});
+  state.rooms.forEach(r=>{const o=sh.rooms[r.id]||{};h+='<div style="border-top:1px solid #2a3550;margin-top:10px;padding-top:8px"><label><input type="checkbox" data-r="'+r.id+'" data-f="publish" '+(o.publish?'checked':'')+'> <b>Quarto '+escapeHTML(String(r.id))+'</b> ('+escapeHTML(r.house||'')+')</label><input data-r="'+r.id+'" data-f="preco" type="number" placeholder="Preço € / mês" style="'+inp+'" value="'+(o.preco||'')+'"><input data-r="'+r.id+'" data-f="caucao" type="number" placeholder="Caução €" style="'+inp+'" value="'+(o.caucao||'')+'"><input data-r="'+r.id+'" data-f="area" placeholder="Área (m²)" style="'+inp+'" value="'+escapeHTML(o.area||'')+'"><input data-r="'+r.id+'" data-f="cama" placeholder="Cama (solteiro/casal)" style="'+inp+'" value="'+escapeHTML(o.cama||'')+'"><input data-r="'+r.id+'" data-f="wc" placeholder="Casa de banho (privada/partilhada)" style="'+inp+'" value="'+escapeHTML(o.wc||'')+'"><textarea data-r="'+r.id+'" data-f="desc" placeholder="Descrição, mobília, despesas incluídas" style="'+inp+'">'+escapeHTML(o.desc||'')+'</textarea>'+photoBlock(String(r.id),r.house||'',o.fotos)+'</div>';});
   const ov=overlayCard('Montra de quartos',h,[['Guardar e publicar',async()=>{}]]);
   const save=()=>{sh.whatsapp=ov.querySelector('#shWa').value.trim();ov.querySelectorAll('[data-h]').forEach(e=>{sh.houses[e.dataset.h]=sh.houses[e.dataset.h]||{};sh.houses[e.dataset.h][e.dataset.f]=e.value;});ov.querySelectorAll('[data-r]').forEach(e=>{const o=sh.rooms[e.dataset.r]=sh.rooms[e.dataset.r]||{};o[e.dataset.f]=e.type==='checkbox'?e.checked:e.value;});};
-  ov.querySelectorAll('input[data-photo]').forEach(f=>f.onchange=async()=>{save();const n=await uploadPhotos(f.dataset.photo,f.dataset.house,[...f.files]);if(n)showSaveToast(true,n+' foto(s) enviada(s)');});
-  const pb=[...ov.querySelectorAll('button')].find(b=>b.textContent==='Guardar e publicar');pb.onclick=async(e)=>{e.stopPropagation();save();await saveState();const n=await publishShowcase();if(n>=0){showSaveToast(true,'Montra publicada: '+n+' quarto(s)');}};
+  const refreshCount=(target)=>{
+    const cnt=ov.querySelector('[data-photo-count="'+cssEscape(target)+'"]');
+    let n=0;
+    if(target.startsWith('H:'))n=((sh.houses[target.slice(2)]||{}).fotos||[]).length;
+    else n=((sh.rooms[target]||{}).fotos||[]).length;
+    if(cnt)cnt.textContent=n+' foto(s)';
+  };
+  /* carregar galerias existentes */
+  const galleries=[...ov.querySelectorAll('[data-photo-gallery]')];
+  for(const g of galleries){
+    const target=g.getAttribute('data-photo-gallery');
+    let ids=[];
+    if(target.startsWith('H:'))ids=((sh.houses[target.slice(2)]||{}).fotos||[]).slice();
+    else ids=((sh.rooms[target]||{}).fotos||[]).slice();
+    await fillPhotoGallery(g,target,ids);
+    refreshCount(target);
+  }
+  ov.querySelectorAll('input[data-photo]').forEach(f=>f.onchange=async()=>{
+    save();
+    const target=f.dataset.photo,house=f.dataset.house,files=[...f.files];
+    f.value='';
+    if(!files.length)return;
+    const n=await uploadPhotos(target,house,files);
+    if(n){
+      showSaveToast(true,n+' foto(s) enviada(s)');
+      const g=ov.querySelector('[data-photo-gallery="'+cssEscape(target)+'"]');
+      let ids=[];
+      if(target.startsWith('H:'))ids=((sh.houses[target.slice(2)]||{}).fotos||[]).slice();
+      else ids=((sh.rooms[target]||{}).fotos||[]).slice();
+      await fillPhotoGallery(g,target,ids);
+      refreshCount(target);
+    }
+  });
+  const pb=[...ov.querySelectorAll('button')].find(b=>b.textContent==='Guardar e publicar');
+  pb.onclick=async(e)=>{e.stopPropagation();save();await saveState();const n=await publishShowcase();if(n>=0){showSaveToast(true,'Montra publicada: '+n+' quarto(s)');}};
 }
 async function showCandidates(){
   const F=window.__fb;if(!F||!F.uid){await customAlert('Entra primeiro na nuvem (botão ☁ no topo).');return;}
