@@ -1,0 +1,32 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function owner() { return request.auth != null && request.auth.token.email == 'SEU_EMAIL@gmail.com'; }
+    match /users/{uid}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+    match /public/{d} { allow read: if true; allow write: if owner(); }
+    match /publicPhotos/{d} { allow read: if true; allow write: if owner(); }
+    match /candidatos/{d} {
+      allow create: if request.resource.data.keys().hasOnly(['nome','contacto','ocupacao','entrada','mensagem','roomId','estado','consent','at'])
+        && request.resource.data.nome is string && request.resource.data.nome.size() <= 80
+        && request.resource.data.contacto is string && request.resource.data.contacto.size() <= 80
+        && request.resource.data.mensagem.size() <= 500 && request.resource.data.consent == true && request.resource.data.estado == 'novo';
+      allow read, update, delete: if owner();
+    }
+    match /portal/{token} {
+      allow get: if true;
+      allow list: if false;
+      allow write: if owner();
+    }
+    match /pedidos/{d} {
+      allow create: if request.resource.data.keys().hasOnly(['token','quarto','tipo','mes','texto','foto','estado','at'])
+        && request.resource.data.token is string && request.resource.data.token.size() >= 20
+        && exists(/databases/$(database)/documents/portal/$(request.resource.data.token))
+        && request.resource.data.tipo in ['comprovativo','manutencao','mensagem','limpeza','reserva']
+        && request.resource.data.texto.size() <= 1000 && request.resource.data.foto.size() <= 420000
+        && request.resource.data.estado == 'novo';
+      allow read, update, delete: if owner();
+    }
+  }
+}

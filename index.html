@@ -1,4 +1,6 @@
 <!DOCTYPE html>
+<!-- build: foto-ui+auth-mobile 2026-10-05T20:45 WEST -->
+
 <html lang="pt-PT">
 <head>
 <meta charset="UTF-8">
@@ -34,8 +36,9 @@
    s.onerror = function () { loadChartLib(urls, i + 1); };
    document.head.appendChild(s);
  })([
-  'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js',
-    'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js'
+   'chart.umd.min.js',
+   'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js',
+   'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js'
  ]);
 </script>
 <style>
@@ -786,44 +789,6 @@
 }
 
 </style>
-
-
-<!-- ========================================== -->
-<!-- FIREBASE SDK & CONFIGURAÇÃO EM TEMPO REAL  -->
-<!-- ========================================== -->
-<script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-  import { getFirestore, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-  import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
-
-const firebaseConfig = {
-    apiKey: "AIzaSyCwULDIMegxK5qpk7KN3x4jvwbdwN8HSWw",
-    authDomain: "alojamentovalenca-66035.firebaseapp.com",
-    projectId: "alojamentovalenca-66035",
-    storageBucket: "alojamentovalenca-66035.firebasestorage.app",
-    messagingSenderId: "401234375880",
-    appId: "1:401234375880:web:b41eb60bc1c0cd791ee1fd",
-    measurementId: "G-L7BR05SM36"
-};
-
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-
-const btn = document.getElementById("firebaseStatusBtn");
-if (btn) {
-  btn.textContent = "☁️ Firebase: Pronto";
-  btn.classList.add("drive-active");
-}
- 
-  // Expor utilitários globalmente para o script principal
-  window.firebaseDB = db;
-  window.FirebaseFirestore = { doc, setDoc, getDoc, onSnapshot };
-</script>
-
-
-
-
-
 </head>
 <body>
 <div class="unsaved-banner" id="unsavedBanner" role="status" aria-live="polite">
@@ -833,9 +798,6 @@ if (btn) {
 <div class="wrap">
 
  <header class="top">
-
-
-
  <div class="brand-mark">
  <span class="num">R.</span>
  <div>
@@ -845,15 +807,12 @@ if (btn) {
  </div>
  <div class="header-actions">
  <button class="theme-toggle" id="backupModalBtn">📦 BACKUPS</button>
-<button id="firebaseStatusBtn" class="theme-toggle" title="Estado da Sincronização Firebase">
-  🔄 Firebase: A ligar...
-</button>
  <button class="btn small" id="savePainelBtn" type="button" title="Grava todos os dados neste navegador">💾 Guardar</button>
  <span class="save-sync-indicator" id="saveSyncIndicator" data-state="ok" role="status" aria-live="polite" title="Estado da cópia local e do ficheiro selecionado">Local guardado · ficheiro não ligado</span>
  <div class="header-more" id="headerMore">
    <button class="theme-toggle" id="headerMoreBtn" type="button">⋯ Mais</button>
    <div class="header-more-menu" id="headerMoreMenu">
-     <button class="theme-toggle" id="linkDriveBtn" type="button">📁 Ficheiro (sync)</button>
+     <button class="theme-toggle" id="linkDriveBtn" type="button">📁 Ficheiro local (opcional)</button>
      <button class="theme-toggle" id="exportQuickBtn" type="button">BACKUP RÁPIDO</button>
      <button class="theme-toggle" id="exportBtn" type="button">BACKUP COMPLETO</button>
      <button class="theme-toggle" id="exportCsvBtn" type="button">CSV</button>
@@ -3559,6 +3518,17 @@ async function idbSet(key, value) {
     tx.onerror = () => reject(tx.error);
   });
 }
+async function idbDelete(key) {
+  try {
+    const db = await idbOpen();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).delete(key);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) { return false; }
+}
 function slimStoreForAutoBackup(s) {
   try {
     const copy = JSON.parse(JSON.stringify(s));
@@ -4081,15 +4051,14 @@ async function saveStateInternal() {
      }
    } catch (_) { /* ignore estimate errors */ }
 
-    // Estado principal → IndexedDB; localStorage fica como espelho leve / compatibilidade
-    try { await idbSet(IDB_KEY_MAIN, serialized); } catch (idbErr) { console.warn('IDB save:', idbErr); }
+    // P10 — IDB é a fonte de verdade (obrigatório); localStorage é espelho best-effort
+    await idbSet(IDB_KEY_MAIN, serialized);
     try {
       localStorage.setItem(STORE_KEY, serialized);
       localStorage.setItem('livroDaCasa_meta_v1', JSON.stringify({ savedAt: new Date().toISOString(), bytes: serialized.length }));
     } catch (lsErr) {
-      // Se localStorage falhar mas IDB ok, continua
-      console.warn('localStorage espelho falhou; dados no IndexedDB.', lsErr);
-      if (!(await idbGet(IDB_KEY_MAIN))) throw lsErr;
+      console.warn('[quota] localStorage espelho falhou; IDB OK.', lsErr);
+      // Não propagar — dados estão seguros no IndexedDB
     }
 
     if (fileHandle) {
@@ -5043,6 +5012,8 @@ function getPropertyExpensePanelItems(monthIdx) {
 }
 
 async function markPropertyExpensePaid(itemKey,monthIdx) {
+ const lockKey = `propExp::${itemKey}::${monthIdx}`;
+ return withLock(lockKey, async () => {
  const key=String(itemKey),isModel=key.startsWith('model:'),modelId=isModel?key.slice(6):'';
  let expense=(state.expenses||[]).find(e=>String(e.id)===key),createExpense=false;
  if(isModel){
@@ -5062,6 +5033,7 @@ async function markPropertyExpensePaid(itemKey,monthIdx) {
  (state.transactions||(state.transactions=[])).push({id:txId,date:`${year}-${String(Number(monthIdx)+1).padStart(2,'0')}-01`,type:'expense',roomId:'',category:expense.category||'Outras',house:expense.house||'geral',method:'Registado no painel',notes:'Despesa do imóvel marcada como paga no painel (data real não indicada)',amount,expenseId:expense.id,propertyId:store.currentId,source:'panel_fixed_expense'});
  if(!await saveState()){state=before;store.properties[store.currentId].data=state;return false;}
  renderDespesasTab();return true;
+ });
 }
 
 const RENDA_STATUS_OPTIONS = ['Pago','Não Pago','Em Espera','CAUÇÃO'];
@@ -5822,7 +5794,7 @@ function getMonthlyLedgerTotals(propertyId=store.currentId,year=Number(state.man
    const month=Number(String(r.date||'').slice(5,7))-1;
    if(month<0||month>11)return;
    const amt=Number(r.amount)||0;
-   if(r.type==='income'&&String(r.category||'')==='Caução'){deposits[month]+=amt;return;}
+   if(r.type==='income'&&String(r.category||'')==='Caução'){const _d=((state.tenants[r.roomId]||{}).caucaoDestino)||'pendente';if(_d==='pendente'){deposits[month]+=amt;return;}if(_d==='devolvida')return;}
    if(r.type==='income'){
      income[month]+=amt;
      if(String(r.category||'')==='Recuperação de despesas') recovered[month]+=amt;
@@ -6739,7 +6711,7 @@ document.getElementById('addExpBtn').onclick = async () => {
    showSaveToast(true, 'Despesa actualizada');
    // Reabrir grupo e destacar linha editada
    try {
-     const row = document.querySelector('[data-action="edit-exp"][data-id="' + CSS.escape(keepId) + '"]');
+     const row = document.querySelector('[data-action="edit-exp"][data-id="' + cssEscape(keepId) + '"]');
      if (row) {
        const detail = row.closest('.exp-detail-group');
        if (detail) detail.style.display = '';
@@ -7402,7 +7374,22 @@ document.getElementById('importFile').addEventListener('change', (e) => {
 function featureId(prefix) { return prefix + '_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,8); }
 function localDateString(d=new Date()) { const x=new Date(d.getTime()-d.getTimezoneOffset()*60000); return x.toISOString().slice(0,10); }
 function panelStatusRef(kind,rid,mk){return `${Number(state.managementYear)||2026}|${mk}|${String(rid)}|${kind}`;}
+/* P04 — mutex por chave para evitar race em cliques rápidos */
+const _pendingMutations = new Map();
+async function withLock(key, fn) {
+  while (_pendingMutations.has(key)) {
+    await _pendingMutations.get(key);
+  }
+  let release;
+  const lock = new Promise(r => { release = r; });
+  _pendingMutations.set(key, lock);
+  try { return await fn(); }
+  finally { _pendingMutations.delete(key); release(); }
+}
+
 async function setPanelPaymentStatus(kind,rid,value,mk,opts){
+  const lockKey = `${kind}::${mk}::${rid}`;
+  return withLock(lockKey, async () => {
   const key=ovKey(mk,rid),ref=panelStatusRef(kind,rid,mk),linked=(state.transactions||[]).filter(t=>t.statusRef===ref);
   const statusMap=kind==='despesas'?state.despesasOverrides:state.overrides;
   const stateBefore=JSON.parse(JSON.stringify(state));
@@ -7421,6 +7408,7 @@ async function setPanelPaymentStatus(kind,rid,value,mk,opts){
   // Sincronizar Hoje ↔ Painel ↔ Visão anual (e caixa se estiver aberta)
   try { refreshAfterPaymentChange(); } catch (e) { console.warn('refreshAfterPaymentChange', e); }
   return true;
+  });
 }
 
 /**
@@ -7472,7 +7460,12 @@ function getReportState(propertyId,year) {
   const p=store.properties[propertyId]; if(!p) return null;
   if(propertyId===store.currentId && Number(state.managementYear)===Number(year)) return state;
   const base=p.data||{}; const f=(base.yearlyFinancials||{})[year]||{};
-  return {...base, managementYear:Number(year), expenses:f.expenses||[], overrides:f.overrides||{}, despesasOverrides:f.despesasOverrides||{}, roomExpenseAlloc:f.roomExpenseAlloc||{}, rentedOverrides:f.rentedOverrides||{}, monthlyRents:f.monthlyRents||{}, transactions:base.transactions||[]};
+  /* P09 — filtrar transações pelo ano do relatório */
+  const txsYear=(base.transactions||[]).filter(t=>{
+    const y=Number(t.statusMeta&&t.statusMeta.year)||Number(String(t.date||'').slice(0,4));
+    return y===Number(year);
+  });
+  return {...base, managementYear:Number(year), expenses:f.expenses||[], overrides:f.overrides||{}, despesasOverrides:f.despesasOverrides||{}, roomExpenseAlloc:f.roomExpenseAlloc||{}, rentedOverrides:f.rentedOverrides||{}, monthlyRents:f.monthlyRents||{}, transactions:txsYear};
 }
 /** Contrato activo (ocupado/caução) no mês/ano — ignora overrides fantasma após o fim. */
 function roomUnderContractInMonth(tenants, roomId, year, monthIdx) {
@@ -7547,11 +7540,33 @@ function parseCsvGrid(text){
 function bankHeader(v){return String(v||'').trim().toLocaleLowerCase('pt-PT').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,' ').trim();}
 function bankAmount(v){let s=String(v||'').trim().replace(/[€\s]/g,'');let neg=/^\(.*\)$/.test(s);s=s.replace(/[()]/g,'');if(s.includes(',')&&s.includes('.'))s=s.lastIndexOf(',')>s.lastIndexOf('.')?s.replace(/\./g,'').replace(',','.'):s.replace(/,/g,'');else if(s.includes(','))s=s.replace(',','.');const n=Number(s);return Number.isFinite(n)?(neg?-Math.abs(n):n):NaN;}
 function bankDate(v){const s=String(v||'').trim().split(/\s+/)[0];let y,m,d;if(/^\d{4}-\d{2}-\d{2}/.test(s)){[,y,m,d]=s.match(/^(\d{4})-(\d{2})-(\d{2})/);y=Number(y);m=Number(m);d=Number(d);}else{const parts=s.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})$/);if(!parts)return '';d=Number(parts[1]);m=Number(parts[2]);y=Number(parts[3]);if(y<100)y+=y<50?2000:1900;}const dt=new Date(y,m-1,d);if(dt.getFullYear()!==y||dt.getMonth()!==m-1||dt.getDate()!==d)return '';return `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;}
+/* P12 — parser CSV mais robusto: fallback de delimitador + feedback das colunas detetadas */
 function parseBankStatement(text){
- const parsed=parseCsvGrid(String(text||'').replace(/^\uFEFF/,'')),grid=parsed.rows;if(grid.length<2)throw new Error('O CSV tem de incluir cabeçalho e pelo menos uma linha.');
+ let raw=String(text||'').replace(/^\uFEFF/,'');
+ let parsed=parseCsvGrid(raw),grid=parsed.rows;
+ /* Se o resultado tiver poucas colunas, tenta \t e vírgula explicitamente */
+ if(!grid.length || (grid[0]&&grid[0].length<3)){
+   for(const alt of ['\t',',',';']){
+     const forced=raw.split(/\r?\n/).map(line=>{
+       const cells=[];let cell='',q=false;
+       for(let i=0;i<line.length;i++){
+         const c=line[i];
+         if(c==='"'){if(q&&line[i+1]==='"'){cell+='"';i++;}else q=!q;}
+         else if(c===alt&&!q){cells.push(cell);cell='';}
+         else cell+=c;
+       }
+       cells.push(cell);return cells;
+     }).filter(r=>r.some(v=>String(v).trim()));
+     if(forced.length>=2&&forced[0].length>=3){grid=forced;parsed={rows:forced,delimiter:alt};break;}
+   }
+ }
+ if(grid.length<2)throw new Error('O CSV tem de incluir cabeçalho e pelo menos uma linha.');
  const headers=grid[0].map(bankHeader),find=names=>headers.findIndex(h=>names.some(n=>h===n||h.includes(n)));
- const dateCol=find(['data movimento','data operacao','data','date','booking date']),descCol=find(['descricao','descritivo','description','detalhe','movimento','operacao','concept','referencia']),amountCol=find(['montante','valor','amount','quantia']),debitCol=find(['debito','debit']),creditCol=find(['credito','credit']),kindCol=find(['tipo','type']);
- if(dateCol<0||descCol<0||(amountCol<0&&debitCol<0&&creditCol<0))throw new Error('Não reconheci as colunas. O CSV precisa de data, descrição e valor (ou débito/crédito).');
+ const dateCol=find(['data movimento','data operacao','data valor','data','date','booking date','value date']),descCol=find(['descricao','descritivo','description','detalhe','movimento','operacao','concept','referencia','narrativa']),amountCol=find(['montante','valor','amount','quantia','importe']),debitCol=find(['debito','debit','saida']),creditCol=find(['credito','credit','entrada']),kindCol=find(['tipo','type','natureza']);
+ if(dateCol<0||descCol<0||(amountCol<0&&debitCol<0&&creditCol<0)){
+   const detected=(grid[0]||[]).map(h=>String(h||'').trim()).filter(Boolean).slice(0,12).join(', ')||'(nenhuma)';
+   throw new Error('Não reconheci as colunas. Detetei: ['+detected+']\nO CSV precisa de colunas com nomes como: data, descrição, valor (ou débito/crédito separados).');
+ }
  const out=[],occurrences=new Map();for(let i=1;i<grid.length;i++){const cells=grid[i],date=bankDate(cells[dateCol]),description=String(cells[descCol]||'').trim();let amount;if(amountCol>=0)amount=bankAmount(cells[amountCol]);else{const credit=creditCol>=0?bankAmount(cells[creditCol]):0,debit=debitCol>=0?bankAmount(cells[debitCol]):0;amount=(Number.isFinite(credit)?Math.abs(credit):0)-(Number.isFinite(debit)?Math.abs(debit):0);}if(!date||!description||!Number.isFinite(amount)||amount===0)continue;
    if(kindCol>=0){const kind=bankHeader(cells[kindCol]);if(/deb|saida|pagamento/.test(kind))amount=-Math.abs(amount);else if(/cred|entrada|receb/.test(kind))amount=Math.abs(amount);}
    const type=amount<0?'expense':'income',value=Math.round(Math.abs(amount)*100)/100,base=`${date}|${type}|${value.toFixed(2)}|${description.toLocaleLowerCase()}`,occ=(occurrences.get(base)||0)+1;occurrences.set(base,occ);out.push({lineKey:`${base}|${occ}`,date,description,amount:value,type,importedAt:localDateString(),transactionId:''});
@@ -8172,13 +8187,19 @@ document.getElementById('saveTenantModalBtn').onclick = async () => {
 };
 
 function escapeHTML(str) {
- if (!str) return "";
+ if (str == null || str === '') return "";
  return String(str)
    .replace(/&/g, "&amp;")
    .replace(/</g, "&lt;")
    .replace(/>/g, "&gt;")
    .replace(/"/g, "&quot;")
-   .replace(/'/g, "&#039;");
+   .replace(/'/g, "&#039;")
+   .replace(/`/g, "&#96;");
+}
+/* P11 — fallback para browsers sem CSS.escape */
+function cssEscape(s) {
+  if (window.CSS && typeof CSS.escape === 'function') return CSS.escape(s);
+  return String(s).replace(/([^\w-])/g, '\\$1');
 }
 
 function fmtDateLong(d) {
@@ -9451,7 +9472,7 @@ function goToRoomFromHoje(rid) {
   setTimeout(() => {
     openTenantModal(ridStr);
     try {
-      const row = document.querySelector('#roomsContainer [data-room="' + CSS.escape(ridStr) + '"]');
+      const row = document.querySelector('#roomsContainer [data-room="' + cssEscape(ridStr) + '"]');
       if (row) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
     } catch (e) {}
   }, 80);
@@ -9589,7 +9610,8 @@ async function markDebtPaidFromHoje(rid, mk, kind) {
   if (_d === null) return;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(_d).trim()) || Number(String(_d).slice(0, 4)) !== _y) _d = _y + '-' + String(_mi).padStart(2, '0') + '-01';
   const _m = await customPromptDialog('Método (Transferência / Dinheiro / MB Way):', 'Transferência', 'Método de pagamento');
-  if (!await setPanelPaymentStatus(kind, rid, 'Pago', mk, { date: String(_d).trim(), method: (_m || 'Transferência').trim() })) return;
+  if (_m === null) return; // utilizador cancelou → abortar
+  if (!await setPanelPaymentStatus(kind, rid, 'Pago', mk, { date: String(_d).trim(), method: String(_m).trim() || 'Transferência' })) return;
   if (kind === 'renda') {
     const t0 = state.tenants[rid];
     if (t0 && t0.data_inicio) {
@@ -10533,7 +10555,7 @@ function applyBulkRentUpdate(pct){
   const f=1+Number(pct)/100,fromIdx=currentMonthIndex();let n=0;
   try{localStorage.setItem('livroDaCasa_preBulk_v1',JSON.stringify(state));}catch(e){}
   Object.keys(state.tenants).forEach(rid=>{const t=state.tenants[rid];if(!t||!(Number(t.renda)>0)||currentAutoStatus(rid)==='vago')return;
-    t.renda=Math.round(t.renda*f*100)/100;
+    t.renda=Math.round(t.renda*f*100)/100;(t.rentHistory=t.rentHistory||[]).push({date:todayISO(),amount:t.renda,note:'Atualização em lote '+pct+'%'});
     MONTH_KEYS.forEach((mk,i)=>{if(i>=fromIdx&&isRentedThisMonth(mk,rid,i)&&effectiveStatusRenda(mk,rid)!=='Pago')state.monthlyRents[ovKey(mk,rid)]=t.renda;});n++;});
   return n;
 }
@@ -10567,14 +10589,26 @@ async function autoSnapshot(){
   try{store.properties[store.currentId].data=state;const d=todayISO(),idx=(await idbGet('livroDaCasa_auto_index'))||[];
     if(!idx.includes(d)){await idbSet('livroDaCasa_auto_'+d,JSON.stringify(store));idx.push(d);}
     else await idbSet('livroDaCasa_auto_'+d,JSON.stringify(store));
-    idx.sort();while(idx.length>7){const o=idx.shift();await idbSet('livroDaCasa_auto_'+o,'');}
+    idx.sort();while(idx.length>3){const o=idx.shift();await idbDelete('livroDaCasa_auto_'+o);}
     await idbSet('livroDaCasa_auto_index',idx);}catch(e){console.warn('autoSnapshot',e);}
 }
+/* P06 — só listar cópias automáticas com conteúdo válido */
 async function restoreAutoSnapshot(){
-  const idx=(await idbGet('livroDaCasa_auto_index'))||[];if(!idx.length){await customAlert('Ainda não existem cópias automáticas.');return;}
-  const d=await customPromptDialog('Cópias disponíveis: '+idx.join(', ')+'\nData a restaurar (AAAA-MM-DD):',idx[idx.length-1],'Restaurar cópia automática');if(d===null)return;
-  const raw=await idbGet('livroDaCasa_auto_'+String(d).trim());if(!raw){await customAlert('Cópia não encontrada.');return;}
-  if(!await customConfirm('Substituir TODOS os dados atuais pela cópia de '+d+'? Será guardada antes uma cópia do estado atual.','Restaurar'))return;
+  const idx=(await idbGet('livroDaCasa_auto_index'))||[];
+  const valid=[];
+  for(const d of idx){
+    const raw=await idbGet('livroDaCasa_auto_'+d);
+    if(raw && String(raw).length>200){
+      try{const j=JSON.parse(raw);if(j&&j.properties)valid.push(d);}catch(e){}
+    }
+  }
+  if(!valid.length){await customAlert('Não há cópias automáticas válidas.');return;}
+  const d=await customPromptDialog('Cópias válidas: '+valid.join(', ')+'\nData a restaurar (AAAA-MM-DD):',valid[valid.length-1],'Restaurar cópia automática');
+  if(d===null)return;
+  const key=String(d).trim();
+  if(!valid.includes(key)){await customAlert('Data inválida ou cópia sem conteúdo útil.');return;}
+  const raw=await idbGet('livroDaCasa_auto_'+key);if(!raw){await customAlert('Cópia não encontrada.');return;}
+  if(!await customConfirm('Substituir TODOS os dados atuais pela cópia de '+key+'? Será guardada antes uma cópia do estado atual.','Restaurar'))return;
   await autoSnapshot();await idbSet(IDB_KEY_MAIN,raw);try{localStorage.setItem(STORE_KEY,raw);}catch(e){}location.reload();
 }
 async function showConsistency(){const r=runConsistencyCheck();const l=[...r.serious.map(x=>'⚠ '+x),...r.info.map(x=>'ℹ '+x)];await customAlert(l.length?l.join('\n'):'✓ Dados consistentes.','Verificação de dados');}
@@ -10604,7 +10638,10 @@ renderContractAlerts=function(){
   _rcaOrig();const el=document.getElementById('contractAlerts');if(!el)return;const now=new Date(),td=new Date(now.getFullYear(),now.getMonth(),now.getDate()),out=[];
   Object.entries(state.tenants||{}).forEach(([rid,t])=>{if(!t||currentAutoStatus(rid)==='vago'||!t.data_inicio)return;
     const st=new Date(t.data_inicio+'T00:00:00');let c=new Date(td.getFullYear(),st.getMonth(),st.getDate());if(c<td)c=new Date(td.getFullYear()+1,st.getMonth(),st.getDate());
-    const days=Math.round((c-td)/864e5);if(c.getFullYear()-st.getFullYear()>=1&&days<=45)out.push('Quarto '+rid+' · '+escapeHTML(t.nome||'')+' — atualização de renda (aniversário) em '+days+' dia(s)');
+    const days=Math.round((c-td)/864e5);
+    /* P08 — alertas de aniversário/renovação também para contratos < 1 ano */
+    if(days>=0&&days<=45)out.push('Quarto '+rid+' · '+escapeHTML(t.nome||'')+' — aniversário/renovação em '+days+' dia(s)');
+    if(t.data_final){const df=daysUntil(t.data_final);if(df!=null&&df>=0&&df<=45)out.push('Quarto '+rid+' · '+escapeHTML(t.nome||'')+' — fim de contrato em '+df+' dia(s)');}
     const v=t.fiscal&&t.fiscal.docValidade;if(v){const dv=daysUntil(v);if(dv!=null&&dv<=45)out.push('Quarto '+rid+' · '+escapeHTML(t.nome||'')+' — documento '+(dv<0?'expirado há '+(-dv):'expira em '+dv)+' dia(s)');}});
   out.forEach(m=>{const d=document.createElement('div');d.style.cssText='padding:8px 12px;margin-top:8px;border:1px solid var(--amber);border-radius:6px;font-size:13px;';d.textContent='';d.innerHTML='⏰ '+m;el.appendChild(d);});
 };
@@ -10613,8 +10650,6 @@ renderContractAlerts=function(){
   [['Extrato inquilino',async()=>{const r=await customPromptDialog('Número do quarto:','','Extrato por inquilino');if(r&&state.tenants[r.trim()])openTenantStatement(r.trim());else if(r!==null)await customAlert('Quarto inválido.');}],
    ['Duplicar ficha',duplicateTenantRecord],['Verificar dados',showConsistency],['Restaurar cópia automática',restoreAutoSnapshot]].forEach(([l,f])=>{const b=document.createElement('button');b.type='button';b.className='inq-filter-btn';b.textContent=l;b.onclick=f;bar.appendChild(b);});
 })();
-setTimeout(async()=>{try{await autoSnapshot();const r=runConsistencyCheck();if(r.serious.length)await customAlert(r.serious.join('\n'),'Possíveis inconsistências nos dados');
-  const last=localStorage.getItem('livroDaCasa_lastFullBackupAt_v1'),day=todayISO();if((!last||Date.now()-new Date(last)>7*864e5)&&localStorage.getItem('livroDaCasa_bkRemind')!==day){localStorage.setItem('livroDaCasa_bkRemind',day);showSaveToast(false,'Faz um BACKUP COMPLETO (há mais de 7 dias)');}}catch(e){console.warn(e);}},5000);
 setInterval(autoSnapshot,15*60*1000);
 
 /* ===== Hoje: semáforo, pagamento em lote, parcial, testes e análise ===== */
@@ -10630,25 +10665,39 @@ function decorateHoje(){
   const chip=(l,v,c)=>'<span style="display:inline-flex;align-items:center;gap:6px;margin:0 12px 6px 0;font-size:13px"><i style="width:11px;height:11px;border-radius:50%;background:'+c+'"></i>'+l+' <b>'+(v==null?'—':v.toFixed(0)+'%')+'</b></span>';
   const d=document.createElement('div');d.id='hojeExtras';d.style.cssText='padding:10px 12px;margin-bottom:12px;border:1px solid var(--rule,#ccc);border-radius:8px';
   d.innerHTML='<div>'+chip('Ocupação',m.occ,col(m.occ,90,75))+chip('Cobrança do mês',m.col,col(m.col,90,70))+chip('Margem do ano',m.margin,col(m.margin==null?0:m.margin,50,30))+'</div><div id="hojeBtns"></div>';
-  [['Pagar em lote',payMonthBatch],['Pagamento parcial',partialPayment],['Cobrar em atraso',collectAllOverdue],['Análise',showAnalysis],['Preço ideal',showIdealPrices],['Alterações',showChangeLog],['Testes de cálculo',showSelfTests]].forEach(([l,f])=>{const b=document.createElement('button');b.type='button';b.className='inq-filter-btn';b.textContent=l;b.onclick=f;d.querySelector('#hojeBtns').appendChild(b);});
-  host.insertBefore(d,host.firstChild);
+  /* wrapper P03 — não usar referência directa a funções reatribuídas */
+  [['Pagar em lote',()=>payMonthBatch()],['Cobrar em atraso',()=>collectAllOverdue()],['Fechar mês',()=>closeMonthChecklist()],['🛠 Ferramentas',()=>openToolsMenu()]].forEach(([l,f])=>{const b=document.createElement('button');b.type='button';b.className='inq-filter-btn';b.textContent=l;b.onclick=f;d.querySelector('#hojeBtns').appendChild(b);});
+  /* P13 — barra de métricas acima da grelha (não é cartão; append evita conflito de order) */
+  const gridEl=document.getElementById('hojeGrid');
+  if(gridEl&&gridEl.parentNode===host)host.insertBefore(d,gridEl);
+  else host.appendChild(d);
 }
 const _rhOrig=renderHojeTab;renderHojeTab=function(){_rhOrig();try{decorateHoje();}catch(e){console.warn(e);}};
 async function askMonthKey(def){const v=await customPromptDialog('Mês ('+MONTH_KEYS.join(', ')+'):',def,'Mês');if(v===null)return null;const k=String(v).trim().toUpperCase();if(!MONTH_KEYS.includes(k)){await customAlert('Mês inválido.');return null;}return k;}
 async function payMonthBatch(){
   const mk=await askMonthKey(MONTH_KEYS[currentRealMonthIndex()]);if(!mk)return;const i=MONTH_KEYS.indexOf(mk),ids=state.rooms.map(r=>r.id).filter(r=>isRentedThisMonth(mk,r,i)&&effectiveStatusRenda(mk,r)!=='Pago');
   if(!ids.length){await customAlert('Todas as rendas deste mês já estão pagas.');return;}
-  const date=await customPromptDialog('Data do pagamento (AAAA-MM-DD):',todayISO(),'Pagar em lote');if(date===null)return;const meth=(await customPromptDialog('Método:','Transferência','Pagar em lote'))||'Transferência';
+  const date=await customPromptDialog('Data do pagamento (AAAA-MM-DD):',todayISO(),'Pagar em lote');if(date===null)return;
+  const methRaw=await customPromptDialog('Método:','Transferência','Pagar em lote');if(methRaw===null)return;
+  const meth=String(methRaw).trim()||'Transferência';
   if(!await customConfirm('Marcar como PAGAS as rendas de '+mk+' dos quartos: '+ids.join(', ')+'?','Pagar em lote'))return;
-  let n=0;for(const r of ids){if(await setPanelPaymentStatus('renda',r,'Pago',mk,{date:String(date).trim(),method:meth.trim()}))n++;}showSaveToast(true,n+' renda(s) marcadas como pagas');
+  let n=0;for(const r of ids){if(await setPanelPaymentStatus('renda',r,'Pago',mk,{date:String(date).trim(),method:meth}))n++;}showSaveToast(true,n+' renda(s) marcadas como pagas');
 }
 async function partialPayment(){
-  const rid=(await customPromptDialog('Quarto:','','Pagamento parcial'));if(!rid||!state.tenants[rid.trim()])return;const r=rid.trim();
-  const mk=await askMonthKey(MONTH_KEYS[currentRealMonthIndex()]);if(!mk)return;const i=MONTH_KEYS.indexOf(mk),year=Number(state.managementYear)||2026,ym=year+'-'+String(i+1).padStart(2,'0');
+  const ridRaw=await customPromptDialog('Quarto:','','Pagamento parcial');
+  if(ridRaw===null)return;
+  if(!ridRaw||!state.tenants[String(ridRaw).trim()])return;
+  const r=String(ridRaw).trim();
+  const mk=await askMonthKey(MONTH_KEYS[currentRealMonthIndex()]);if(!mk)return;
+  const i=MONTH_KEYS.indexOf(mk),year=Number(state.managementYear)||2026,ym=year+'-'+String(i+1).padStart(2,'0');
   if(effectiveStatusRenda(mk,r)==='Pago'){await customAlert('Esta renda já está paga.');return;}
-  const amt=Number(String(await customPromptDialog('Valor recebido (€):','','Pagamento parcial')).replace(',','.'));if(!(amt>0)){return;}
-  const date=(await customPromptDialog('Data (AAAA-MM-DD):',todayISO(),'Pagamento parcial'))||todayISO();
-  state.transactions.push({id:featureId('tx'),date:/^\d{4}-\d{2}-\d{2}$/.test(date.trim())&&date.slice(0,4)==String(year)?date.trim():ym+'-01',type:'income',roomId:r,category:'Renda',method:'Pagamento parcial',notes:'Pagamento parcial/prestação',amount:Math.round(amt*100)/100,propertyId:store.currentId,source:'partial'});
+  const amtRaw=await customPromptDialog('Valor recebido (€):','','Pagamento parcial');
+  if(amtRaw===null)return;
+  const amt=Number(String(amtRaw).replace(',','.'));if(!(amt>0)){return;}
+  const dateRaw=await customPromptDialog('Data (AAAA-MM-DD):',todayISO(),'Pagamento parcial');
+  if(dateRaw===null)return;
+  const date=String(dateRaw).trim()||todayISO();
+  state.transactions.push({id:featureId('tx'),date:/^\d{4}-\d{2}-\d{2}$/.test(date)&&date.slice(0,4)==String(year)?date:ym+'-01',type:'income',roomId:r,category:'Renda',method:'Pagamento parcial',notes:'Pagamento parcial/prestação',amount:Math.round(amt*100)/100,propertyId:store.currentId,source:'partial'});
   const paid=state.transactions.filter(t=>t.type==='income'&&t.category==='Renda'&&String(t.roomId)===r&&String(t.date).slice(0,7)===ym).reduce((a,t)=>a+(Number(t.amount)||0),0),due=Number(effectiveTotalPagar(mk,r))||0;
   if(paid>=due-0.005){await setPanelPaymentStatus('renda',r,'Pago',mk);}else{await saveState();renderHojeTab();}
   showSaveToast(true,paid>=due-0.005?'Renda liquidada':'Parcial registado · em falta '+fmt(due-paid));
@@ -10660,7 +10709,7 @@ async function collectAllOverdue(){
 }
 function selfTests(){
   const r=[];state.rooms;MONTH_KEYS.forEach((mk,i)=>['baixo','cima'].forEach(h=>{const ids=state.rooms.filter(x=>x.house===h).map(x=>x.id),bill=houseUtilityTotal(mk,h),a=ids.reduce((s,x)=>s+(Number(autoExpenseAlloc(mk,x))||0),0);
-    if(bill>0&&Math.abs(a-bill)>0.05)r.push('Rateio '+mk+' casa '+h+': fatura '+bill.toFixed(2)+' ≠ alocado '+a.toFixed(2));}));
+    if(bill>0&&Math.abs(a-bill)>0.05&&ids.some(x=>isRentedThisMonth(mk,x,i)))r.push('Rateio '+mk+' casa '+h+': fatura '+bill.toFixed(2)+' ≠ alocado '+a.toFixed(2));}));
   MONTH_KEYS.forEach((mk,i)=>state.rooms.forEach(x=>{const d=Number(effectiveTotalPagar(mk,x.id))||0;if(d<0)r.push('Renda negativa '+mk+'::'+x.id);if(isRentedThisMonth(mk,x.id,i)&&d===0&&!(state.tenants[x.id]&&state.tenants[x.id].renda===0))r.push('Renda 0 em mês ocupado '+mk+'::'+x.id);}));
   return r;
 }
@@ -10729,144 +10778,543 @@ function idealPriceRows(){
   return out;
 }
 function decorateHojeLayout(){
-  const grid=document.getElementById('hojeGrid');if(!grid)return;grid.querySelector('[data-hoje-card="ideal"]')?.remove();
+  const grid=document.getElementById('hojeGrid');if(!grid)return;decorateForecast(grid);grid.querySelector('[data-hoje-card="ideal"]')?.remove();
   const rows=idealPriceRows(),ch=rows.filter(r=>Math.abs(r.sug-r.cur)>0.5),card=document.createElement('div');card.className='hoje-card';card.setAttribute('data-hoje-card','ideal');
   card.innerHTML='<h3>Preço ideal por quarto</h3><p style="font-size:11px;color:var(--paper-dim);margin:0 0 8px">Mediana da casa e vagas do ano. Sugestão simples, não é análise de mercado.</p>'+
     (ch.length?ch.map(r=>{const d=r.sug-r.cur;return '<div class="alert-row" style="display:flex;justify-content:space-between;gap:8px;padding:6px 0"><span>Quarto '+r.rid+' · '+r.h+' — '+fmt(r.cur)+' → <b>'+fmt(r.sug)+'</b></span><span style="color:'+(d>0?'#2e9e6b':'#d99a1c')+'">'+(d>0?'+':'')+fmt(d)+'</span></div>';}).join(''):'<div class="empty-note">Rendas alinhadas com a mediana. Nada a alterar.</div>')+
     '<div style="font-size:11px;color:var(--paper-dim);margin-top:6px">'+rows.length+' quartos analisados</div>';
+  /* P13 — ordenação só via CSS order (nunca insertBefore nos cartões) */
   grid.appendChild(card);
-  const ord={vacant:0,reminders:1,contracts:2,maint:3,debts:4,cobrancas:5,ideal:6,summary:-2,calendar:-1},f=(typeof hojeFilter!=='undefined')?hojeFilter:'all';
-  grid.querySelectorAll('[data-hoje-card]').forEach(c=>{const k=c.getAttribute('data-hoje-card');c.style.order=(k in ord)?ord[k]:9;if(k==='cobrancas')c.style.gridColumn='auto';if(k==='ideal')c.style.display=(f==='all')?'':'none';});
+  const ord={
+    summary:-2, calendar:-1, forecast:0, ideal:1, vacant:2,
+    reminders:3, contracts:4, maint:5, debts:6, cobrancas:7
+  };
+  const f=(typeof hojeFilter!=='undefined')?hojeFilter:'all';
+  grid.querySelectorAll('[data-hoje-card]').forEach(c=>{
+    const k=c.getAttribute('data-hoje-card');
+    c.style.order=(k in ord)?ord[k]:9;
+    if(k==='cobrancas')c.style.gridColumn='1 / -1';
+    if(k==='ideal'||k==='forecast')c.style.display=(f==='all')?'':'none';
+  });
 }
 {const _p=renderHojeTab;renderHojeTab=function(){_p();try{decorateHojeLayout();}catch(e){console.warn(e);}};}
 {const _c=renderCobrancasPorInquilino;renderCobrancasPorInquilino=function(){_c.apply(this,arguments);try{decorateHojeLayout();}catch(e){console.warn(e);}};}
-</script>
 
+/* ===== Histórico: criar lançamentos de renda em falta (estado Pago + contrato ativo) ===== */
+async function backfillPaidRentTx(){
+  if(state.backfillPaidRentV1)return 0;const year=Number(state.managementYear)||2026,cur=currentRealMonthIndex(),tx=state.transactions||[],add=[];
+  MONTH_KEYS.forEach((mk,i)=>{if(i>cur)return;state.rooms.forEach(r=>{if(effectiveStatusRenda(mk,r.id)!=='Pago'||!isRentedThisMonth(mk,r.id,i))return;const ym=year+'-'+String(i+1).padStart(2,'0');
+    if(tx.some(t=>t.type==='income'&&t.category==='Renda'&&String(t.roomId)===String(r.id)&&String(t.date).slice(0,7)===ym))return;const v=Number(effectiveTotalPagar(mk,r.id))||0;if(v>0)add.push({id:featureId('tx'),date:ym+'-01',type:'income',roomId:String(r.id),category:'Renda',amount:v,method:'Histórico (estado Pago)',notes:'Criado automaticamente: mês marcado como pago com contrato ativo',propertyId:store.currentId,source:'backfill'});});});
+  try{await autoSnapshot();}catch(e){}state.transactions=tx.concat(add);state.backfillPaidRentV1=true;await saveState();return add.length;
+}
+/* backfill moved to bootstrapTasks (P05) */
+/* ===== Cobrar em atraso: lista com WhatsApp por inquilino ===== */
+collectAllOverdue=async function(){
+  const year=Number(state.managementYear)||2026,cur=currentRealMonthIndex(),rows=[];
+  MONTH_KEYS.forEach((mk,k)=>{if(k>cur)return;state.rooms.forEach(rm=>{if(isRentedThisMonth(mk,rm.id,k)&&effectiveStatusRenda(mk,rm.id)==='Não Pago')rows.push({rid:rm.id,k,mk,t:state.tenants[rm.id]||{},val:Number(effectiveTotalPagar(mk,rm.id))||0});});});
+  if(!rows.length){await customAlert('Sem rendas em atraso.');return;}
+  const ov=document.createElement('div');ov.style.cssText='position:fixed;inset:0;z-index:99990;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center';
+  const box=document.createElement('div');box.style.cssText='background:#121826;color:#e8ecf5;max-width:420px;width:92%;max-height:80vh;overflow:auto;border-radius:12px;padding:16px';box.innerHTML='<h3 style="margin:0 0 10px">Cobrar em atraso ('+rows.length+')</h3>';
+  rows.forEach(r=>{const d=document.createElement('div');d.style.cssText='display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid rgba(128,128,128,.3)';
+    const _due=year+'-'+String(r.k+1).padStart(2,'0')+'-01',_late=Math.max(0,Math.floor((Date.now()-new Date(_due))/864e5));d.innerHTML='<span style="font-size:13px;line-height:1.4"><b>'+escapeHTML(r.t.nome||('Quarto '+r.rid))+'</b> · quarto '+escapeHTML(String(r.rid))+'<br>'+escapeHTML(r.mk)+' · '+fmt(r.val)+' · vence '+fmtDate(_due)+(_late>0?' · <span style="color:#ff8a9d">'+_late+' dia(s) de atraso</span>':'')+'</span>';
+    const b=document.createElement('button');b.type='button';b.className='inq-filter-btn';b.textContent='WhatsApp';b.onclick=()=>{const due=year+'-'+String(r.k+1).padStart(2,'0')+'-01',late=Math.max(0,Math.floor((Date.now()-new Date(due))/864e5));
+      const ph=(r.t.fiscal&&(r.t.fiscal.whatsapp||r.t.fiscal.telefone))||r.t.telefone||'';openWhatsAppToNumber(ph,buildCobrançaMessage({rid:r.rid,nome:r.t.nome||'',kind:'renda',monthLabel:(MONTH_LABELS[r.k]||r.mk),val:r.val,due,daysLate:late}));};d.appendChild(b);box.appendChild(d);});
+  const c=document.createElement('button');c.type='button';c.className='inq-filter-btn';c.style.marginTop='12px';c.textContent='Fechar';c.onclick=()=>ov.remove();box.appendChild(c);ov.appendChild(box);ov.onclick=e=>{if(e.target===ov)ov.remove();};document.body.appendChild(ov);
+};
 
-// Cole aqui as funções da Firebase:
-
-    async function saveToFirebase(storeData) {
-      if (!window.firebaseDB || !window.FirebaseFirestore) return;
-      try {
-        const { doc, setDoc } = window.FirebaseFirestore;
-        await setDoc(doc(window.firebaseDB, "imoveis", "valenca_principal"), {
-          updatedAt: new Date().toISOString(),
-          payload: storeData
-        });
-      } catch (err) {
-        console.error("Erro ao escrever dados na Firebase:", err);
+/* ===== Lembretes automáticos (aniversário de renda + documentos) e previsão do mês ===== */
+/* B01 fix: NÃO repor renderContractAlerts=_rcaOrig — isso descartava o wrapper P08 */
+function syncAutoReminders(){
+  state.reminders=state.reminders||[];const td=new Date(localDateString()+'T00:00:00'),want={},p2=n=>String(n).padStart(2,'0');
+  Object.entries(state.tenants||{}).forEach(([rid,t])=>{if(!t||currentAutoStatus(rid)==='vago')return;const nm=t.nome||'';
+    if(t.data_inicio){const st=new Date(t.data_inicio+'T00:00:00');let c=new Date(td.getFullYear(),st.getMonth(),st.getDate());if(c<td)c=new Date(td.getFullYear()+1,st.getMonth(),st.getDate());
+      /* P08 — lembrete de aniversário também para contratos não anuais */
+      const ds=c.getFullYear()+'-'+p2(c.getMonth()+1)+'-'+p2(c.getDate());want['ann|'+rid+'|'+ds]={title:'Quarto '+rid+' · '+nm+' — aniversário/renovação do contrato',dueDate:ds,type:'Renda',roomId:rid};}
+    if(t.data_final&&/^\d{4}-\d{2}-\d{2}$/.test(t.data_final))want['end|'+rid+'|'+t.data_final]={title:'Quarto '+rid+' · '+nm+' — fim de contrato',dueDate:t.data_final,type:'Contrato',roomId:rid};
+    const v=t.fiscal&&t.fiscal.docValidade;if(v&&/^\d{4}-\d{2}-\d{2}$/.test(v))want['doc|'+rid+'|'+v]={title:'Quarto '+rid+' · '+nm+' — documento de identificação expira',dueDate:v,type:'Outro',roomId:rid};});
+  let ch=false;Object.entries(want).forEach(([k,w])=>{if(!state.reminders.some(r=>r.autoKey===k)){state.reminders.push({id:featureId('rem'),title:w.title,dueDate:w.dueDate,leadDays:45,type:w.type,roomId:w.roomId,resolved:false,propertyId:store.currentId,auto:true,autoKey:k});ch=true;}});
+  const keep=state.reminders.filter(r=>!(r.auto&&!r.resolved&&!(r.autoKey in want)));if(keep.length!==state.reminders.length){state.reminders=keep;ch=true;}return ch;
+}
+async function runAutoReminders(){try{if(syncAutoReminders()){await saveState();if(typeof renderReminders==='function')renderReminders();if(typeof renderHojeTab==='function')renderHojeTab();}}catch(e){console.warn('lembretes auto',e);}}
+setInterval(runAutoReminders,3600000);
+/* P05 — bootstrap sequencial: um diálogo de cada vez */
+async function bootstrapTasks() {
+  const tasks = [
+    { name: 'lembretes', fn: runAutoReminders },
+    { name: 'snapshot', fn: async () => {
+      await autoSnapshot();
+      const r = runConsistencyCheck();
+      if (r.serious && r.serious.length) return { alert: r.serious.join('\n'), title: 'Possíveis inconsistências nos dados' };
+      const last = localStorage.getItem('livroDaCasa_lastFullBackupAt_v1'), day = todayISO();
+      if ((!last || Date.now() - new Date(last) > 7 * 864e5) && localStorage.getItem('livroDaCasa_bkRemind') !== day) {
+        localStorage.setItem('livroDaCasa_bkRemind', day);
+        if (typeof showSaveToast === 'function') showSaveToast(false, 'Faz um BACKUP COMPLETO (há mais de 7 dias)');
       }
-    }
-
-    function initFirebaseRealtimeSync(applyRemoteDataCallback) {
-      if (!window.firebaseDB || !window.FirebaseFirestore) {
-        setTimeout(() => initFirebaseRealtimeSync(applyRemoteDataCallback), 1000);
-        return;
-      }
-      const { doc, onSnapshot } = window.FirebaseFirestore;
-      onSnapshot(doc(window.firebaseDB, "imoveis", "valenca_principal"), (docSnap) => {
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          if (data && data.payload) {
-            applyRemoteDataCallback(data.payload);
-          }
-        }
-      }, (error) => {
-        console.error("Erro no listener da Firebase:", error);
-      });
-    }
-
-  </script>
-
-
-
-
-// (Todo o código gigante da sua aplicação acaba aqui...)
-    
-    guardarDadosLocais();
-  }
-
-  // === COLE AQUI AS FUNÇÕES DA FIREBASE (NO FIM DO SCRIPT) ===
-
-  async function saveToFirebase(storeData) {
-    if (!window.firebaseDB || !window.FirebaseFirestore) return;
+      return null;
+    }},
+    { name: 'backfill', fn: async () => {
+      const n = await backfillPaidRentTx();
+      if (n) return { alert: n + ' lançamento(s) de renda em falta foram criados a partir dos meses já marcados como pagos (contratos ativos). Foi guardada uma cópia antes; podes desfazer em "Alterações".', title: 'Histórico sincronizado' };
+      return null;
+    }},
+  ];
+  for (const t of tasks) {
     try {
-      const { doc, setDoc } = window.FirebaseFirestore;
-      await setDoc(doc(window.firebaseDB, "imoveis", "valenca_principal"), {
-        updatedAt: new Date().toISOString(),
-        payload: storeData
-      });
-    } catch (err) {
-      console.error("Erro ao escrever dados na Firebase:", err);
+      const r = await t.fn();
+      if (r && r.alert) await customAlert(r.alert, r.title || 'Correção automática');
+      await new Promise(res => setTimeout(res, 400));
+    } catch (e) {
+      console.warn('[bootstrap] ' + t.name + ' falhou:', e);
     }
   }
+  window.__bootDone = true;
+}
+setTimeout(bootstrapTasks, 4500);
+function monthForecast(){
+  const i=currentRealMonthIndex(),mk=MONTH_KEYS[i];let exp=0,rec=0;const pend=[];
+  state.rooms.forEach(r=>{if(!isRentedThisMonth(mk,r.id,i))return;const v=Number(effectiveTotalPagar(mk,r.id))||0;exp+=v;if(effectiveStatusRenda(mk,r.id)==='Pago')rec+=v;else pend.push({rid:r.id,nome:(state.tenants[r.id]||{}).nome||'',v});});
+  let ph=0,pt=0;MONTH_KEYS.forEach((m,k)=>{if(k>=i)return;state.rooms.forEach(r=>{if(isRentedThisMonth(m,r.id,k)){pt++;if(effectiveStatusRenda(m,r.id)==='Pago')ph++;}});});
+  const rate=pt?ph/pt:1,pending=exp-rec;return {mk,exp,rec,pending,pend,rate,real:rec+pending*rate};
+}
+function decorateForecast(grid){
+  grid.querySelector('[data-hoje-card="forecast"]')?.remove();const f=monthForecast(),pct=f.exp?Math.round(f.rec/f.exp*100):100,now=new Date(),dim=new Date(now.getFullYear(),now.getMonth()+1,0).getDate();
+  const c=document.createElement('div');c.className='hoje-card';c.setAttribute('data-hoje-card','forecast');
+  c.innerHTML='<h3>Previsão de recebimentos — '+f.mk+'</h3><div style="height:12px;border-radius:6px;background:rgba(128,128,128,.25);overflow:hidden"><div style="width:'+pct+'%;height:100%;background:#2e9e6b"></div></div>'+
+   '<div style="display:flex;justify-content:space-between;font-size:13px;margin:8px 0"><span>Esperado <b>'+fmt(f.exp)+'</b></span><span>Recebido <b style="color:#2e9e6b">'+fmt(f.rec)+'</b></span><span>Em falta <b style="color:#d24a4a">'+fmt(f.pending)+'</b></span></div>'+
+   '<div style="font-size:12px;opacity:.8">Dia '+now.getDate()+' de '+dim+' · previsão realista no fim do mês: <b>'+fmt(f.real)+'</b> (cobrança histórica '+Math.round(f.rate*100)+'%)</div>'+
+   (f.pend.length?'<div style="margin-top:8px;font-size:12px">'+f.pend.slice(0,6).map(p=>'<div style="display:flex;justify-content:space-between;padding:3px 0"><span>Quarto '+escapeHTML(String(p.rid))+' · '+escapeHTML(p.nome)+'</span><span>'+fmt(p.v)+'</span></div>').join('')+(f.pend.length>6?'<div style="opacity:.7">+ '+(f.pend.length-6)+' em falta</div>':'')+'</div>':'<div class="empty-note" style="margin-top:8px">Todas as rendas deste mês estão recebidas.</div>');
+  grid.appendChild(c);
+}
 
-  function initFirebaseRealtimeSync(applyRemoteDataCallback) {
-    if (!window.firebaseDB || !window.FirebaseFirestore) {
-      setTimeout(() => initFirebaseRealtimeSync(applyRemoteDataCallback), 1000);
-      return;
+/* ===== Menu Ferramentas, Fechar mês e penalização calculada ===== */
+function clickByText(t){const b=[...document.querySelectorAll('button')].find(x=>x.textContent.trim()===t);if(b)b.click();}
+function overlayCard(title,html,btns){
+  const ov=document.createElement('div');ov.style.cssText='position:fixed;inset:0;z-index:99990;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center';
+  const b=document.createElement('div');b.style.cssText='background:#121826;color:#e8ecf5;max-width:430px;width:92%;max-height:82vh;overflow:auto;border-radius:12px;padding:16px';b.innerHTML='<h3 style="margin:0 0 10px">'+title+'</h3>'+html;
+  (btns||[]).concat([['Fechar',null]]).forEach(([l,f])=>{const x=document.createElement('button');x.type='button';x.className='inq-filter-btn';x.style.cssText='margin:8px 6px 0 0';x.textContent=l;x.onclick=()=>{ov.remove();if(f)f();};b.appendChild(x);});
+  ov.appendChild(b);ov.onclick=e=>{if(e.target===ov)ov.remove();};document.body.appendChild(ov);return ov;
+}
+function openToolsMenu(){
+  const items=[['Pagamento parcial',partialPayment],['Atualizar rendas %',()=>clickByText('Atualizar rendas %')],['Extrato por inquilino',()=>clickByText('Extrato inquilino')],['Duplicar ficha',duplicateTenantRecord],['Análise (vagas e caixa)',showAnalysis],['Preço ideal por quarto',showIdealPrices],['Alterações / desfazer',showChangeLog],['Verificar dados',showConsistency],['Testes de cálculo',showSelfTests],['Restaurar cópia automática',restoreAutoSnapshot],['Conciliar extrato bancário',autoReconcileBank],['Recibos do mês',receiptsOfMonth],['Montra: quartos e fotos',openShowcaseEditor],['Candidatos',showCandidates],['Portal do inquilino',openPortalManager],['Portal: NIBs e pagamentos',openPaySettings],['Pedidos dos inquilinos',showRequests],['Comunicados',openAnnouncements],['Link da montra (partilhar)',shareShowcaseLink],['Limpeza da casa',openLimpeza],['Pedidos e reservas',openReservas]];
+  const ov=overlayCard('Ferramentas','<div id="toolsList"></div>');const l=ov.querySelector('#toolsList');
+  items.forEach(([t,f])=>{const b=document.createElement('button');b.type='button';b.className='inq-filter-btn';b.style.cssText='display:block;width:100%;text-align:left;margin:0 0 6px';b.textContent=t;b.onclick=()=>{ov.remove();f();};l.appendChild(b);});
+}
+function closeMonthChecks(mk){
+  const i=MONTH_KEYS.indexOf(mk),r=[],ok=(g,t)=>r.push({g,t});
+  ['baixo','cima'].forEach(h=>{const ids=state.rooms.filter(x=>x.house===h).map(x=>x.id);if(!ids.some(x=>isRentedThisMonth(mk,x,i)))return;
+    const miss=['Água','Luz','Internet'].filter(c=>!(state.expenses||[]).some(e=>e.house===h&&e.category===c&&e.monthIdx===i));
+    ok(!miss.length,'Faturas casa '+h+(miss.length?': faltam '+miss.join(', '):': água, luz e internet lançadas'));
+    const bill=houseUtilityTotal(mk,h),a=ids.reduce((q,x)=>q+(Number(autoExpenseAlloc(mk,x))||0),0);ok(bill<=0||Math.abs(a-bill)<=0.05,'Rateio casa '+h+': fatura '+fmt(bill)+' / alocado '+fmt(a));});
+  const rented=state.rooms.filter(x=>isRentedThisMonth(mk,x.id,i)),unpaid=rented.filter(x=>effectiveStatusRenda(mk,x.id)!=='Pago');ok(!unpaid.length,unpaid.length?unpaid.length+' renda(s) por receber (quartos '+unpaid.map(x=>x.id).join(', ')+')':'Todas as rendas recebidas');
+  const ym=(Number(state.managementYear)||2026)+'-'+String(i+1).padStart(2,'0'),noTx=rented.filter(x=>effectiveStatusRenda(mk,x.id)==='Pago'&&!(state.transactions||[]).some(t=>t.type==='income'&&t.category==='Renda'&&String(t.roomId)===String(x.id)&&String(t.date).slice(0,7)===ym));ok(!noTx.length,noTx.length?noTx.length+' pago(s) sem lançamento de renda':'Estados e lançamentos coerentes');
+  const bk=localStorage.getItem('livroDaCasa_lastFullBackupAt_v1'),days=bk?(Date.now()-new Date(bk))/864e5:null;ok(days!=null&&days<=35,days==null?'Sem backup completo registado':'Último backup completo há '+Math.floor(days)+' dia(s)');
+  return r;
+}
+async function closeMonthChecklist(){
+  const mk=await askMonthKey(MONTH_KEYS[currentRealMonthIndex()]);if(!mk)return;const r=closeMonthChecks(mk),bad=r.filter(x=>!x.g).length,closed=(state.closedMonths||{})[mk];
+  overlayCard('Fechar '+mk,r.map(x=>'<div style="padding:5px 0;font-size:13px">'+(x.g?'✅':'❌')+' '+escapeHTML(x.t)+'</div>').join('')+(closed?'<p style="font-size:12px;opacity:.7">Fechado em '+new Date(closed).toLocaleDateString('pt-PT')+'</p>':'')+(bad?'<p style="font-size:12px;color:#ff8a9d">'+bad+' ponto(s) por resolver.</p>':''),
+    [[closed?'Reabrir mês':'Marcar como fechado',async()=>{state.closedMonths=state.closedMonths||{};if(closed)delete state.closedMonths[mk];else state.closedMonths[mk]=new Date().toISOString();await saveState();showSaveToast(true,closed?'Mês reaberto':'Mês fechado');}]]);
+}
+{const _b=buildCobrançaMessage;buildCobrançaMessage=function(o){let m=_b(o);const pct=Number((state.landlordInfo||{}).lateFeePercent)||0;if(pct>0&&o&&o.daysLate>0&&o.val)m+='\nPenalização calculada ('+pct+'%): '+fmt(o.val*pct/100)+'.';return m;};}
+{const _c=collectAllOverdue;collectAllOverdue=async function(){await _c();const pct=Number((state.landlordInfo||{}).lateFeePercent)||0;if(!pct)return;document.querySelectorAll('div').forEach(d=>{if(d.style.zIndex==='99990'){d.querySelectorAll('span[style*="font-size:13px"]').forEach(sp=>{const m=sp.textContent.match(/EUR\s([\d.,]+)/);if(m&&/atraso/.test(sp.textContent)){const v=Number(m[1].replace('.','').replace(',','.'));if(v)sp.insertAdjacentHTML('beforeend','<br><span style="color:#ffcf6b">+ penalização '+pct+'%: '+fmt(v*pct/100)+'</span>');}});}});};}
+setTimeout(()=>{['Atualizar rendas %','Extrato inquilino','Duplicar ficha','Verificar dados','Restaurar cópia automática','Alterações / desfazer'].forEach(t=>[...document.querySelectorAll('#imovelFilters button')].filter(b=>b.textContent.trim()===t).forEach(b=>b.style.display='none'));},300);
+
+/* ===== Conciliação bancária automática + recibos numerados ===== */
+const normTxt=v=>String(v||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9 ]+/g,' ');
+function nameScore(rid,desc){
+  const t=state.tenants[rid]||{},d=' '+normTxt(desc)+' ',toks=new Set(normTxt((t.nome||'')+' '+((t.fiscal||{}).nomeCompleto||'')).split(' ').filter(x=>x.length>=3));
+  let hit=0;toks.forEach(k=>{if(d.includes(' '+k))hit++;});const ref=normTxt((t.fiscal||{}).referencia||'').trim();if(ref&&ref.length>=4&&d.includes(ref))hit+=2;return hit;
+}
+function bankProposals(){
+  const out=[],cur=currentRealMonthIndex(),year=Number(state.managementYear)||2026,usedTx=new Set(),usedPay=new Set();
+  (state.bankReconciliations||[]).filter(l=>!l.transactionId&&l.type==='income').forEach(line=>{
+    const gap=t=>Math.abs(new Date(t.date+'T00:00:00')-new Date(line.date+'T00:00:00'))/864e5;
+    const cands=bankCandidates(line).filter(t=>t.category==='Renda'&&!usedTx.has(t.id)&&gap(t)<=12).map(t=>({t,sc:nameScore(t.roomId,line.description)*2+(gap(t)<=10?1:0)})).sort((a,b)=>b.sc-a.sc);
+    if(cands.length&&cands[0].sc>=2){usedTx.add(cands[0].t.id);out.push({line,kind:'link',tx:cands[0].t,rid:cands[0].t.roomId,sc:cands[0].sc});return;}
+    for(const r of state.rooms){const sc=nameScore(r.id,line.description);if(sc<1)continue;
+      const lm=Math.min(cur,Number(line.date.slice(5,7))-1);for(let k=lm;k>=0;k--){const mk=MONTH_KEYS[k],key=r.id+'|'+mk;if(usedPay.has(key)||!isRentedThisMonth(mk,r.id,k)||effectiveStatusRenda(mk,r.id)==='Pago')continue;
+        if(Math.round((Number(effectiveTotalPagar(mk,r.id))||0)*100)===Math.round(line.amount*100)){usedPay.add(key);out.push({line,kind:'pay',rid:r.id,mk,sc:sc*2});return;}}}
+  });
+  return out;
+}
+async function applyBankProposals(list){
+  let n=0;try{await autoSnapshot();}catch(e){}
+  for(const p of list){
+    if(p.kind==='link'){p.line.transactionId=p.tx.id;n++;}
+    else if(await setPanelPaymentStatus('renda',p.rid,'Pago',p.mk,{date:p.line.date,method:'Transferência bancária'})){const ref=panelStatusRef('renda',p.rid,p.mk),t=(state.transactions||[]).find(x=>x.statusRef===ref&&x.source==='panel_status');if(t){p.line.transactionId=t.id;n++;}}}
+  await saveState();if(typeof renderBankReconciliation==='function')renderBankReconciliation();return n;
+}
+async function autoReconcileBank(){
+  const props=bankProposals();if(!props.length){await customAlert('Sem propostas automáticas. Importa primeiro um extrato CSV (Despesas & Caixa → Conferir extrato) ou associa à mão.');return;}
+  const html=props.map((p,i)=>'<label style="display:flex;gap:8px;padding:6px 0;font-size:12px;border-bottom:1px solid rgba(128,128,128,.25)"><input type="checkbox" data-p="'+i+'" '+(p.sc>=2?'checked':'')+'><span>'+escapeHTML(p.line.date)+' · '+fmt(p.line.amount)+'<br><i style="opacity:.7">'+escapeHTML(p.line.description.slice(0,50))+'</i><br>→ '+(p.kind==='link'?'associar ao pagamento do quarto '+escapeHTML(String(p.rid)):'marcar PAGO: quarto '+escapeHTML(String(p.rid))+' · '+p.mk)+'</span></label>').join('');
+  const ov=overlayCard('Conciliação automática ('+props.length+')',html,[['Aplicar selecionadas',async()=>{const sel=[...ov.querySelectorAll('input[data-p]:checked')].map(i=>props[Number(i.dataset.p)]);const n=await applyBankProposals(sel);showSaveToast(true,n+' movimento(s) conciliados');}]]);
+}
+/* P15 — numeração de recibos persistente (não reutiliza números apagados) */
+function receiptNumber(rid,mk){
+  state.receipts=state.receipts||[];
+  state.receiptCounters=state.receiptCounters||{};
+  const year=Number(state.managementYear)||2026;
+  let r=state.receipts.find(x=>x.year===year&&String(x.rid)===String(rid)&&x.mk===mk);
+  if(!r){
+    if(state.receiptCounters[year]==null){
+      const existing=state.receipts.filter(x=>x.year===year).length;
+      state.receiptCounters[year]=existing;
     }
-    const { doc, onSnapshot } = window.FirebaseFirestore;
-    onSnapshot(doc(window.firebaseDB, "imoveis", "valenca_principal"), (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        if (data && data.payload) {
-          applyRemoteDataCallback(data.payload);
-        }
-      }
-    }, (error) => {
-      console.error("Erro no listener da Firebase:", error);
-    });
+    state.receiptCounters[year]=(state.receiptCounters[year]||0)+1;
+    const n=state.receiptCounters[year];
+    r={year,rid:String(rid),mk,no:year+'/'+String(n).padStart(4,'0'),at:new Date().toISOString()};
+    state.receipts.push(r);
+    saveState();
   }
+  return r.no;
+}
+{const _b=buildReceiptHtml;buildReceiptHtml=function(rid,mk,amount){let h=_b(rid,mk,amount);const tag='<p style="font-family:sans-serif;font-size:12px;margin:12px 24px">Recibo n.º <b>'+receiptNumber(rid,mk)+'</b></p>';return h.includes('</body>')?h.replace('</body>',tag+'</body>'):h+tag;};}
+async function receiptsOfMonth(){
+  const mk=await askMonthKey(MONTH_KEYS[currentRealMonthIndex()]);if(!mk)return;const i=MONTH_KEYS.indexOf(mk),rows=state.rooms.filter(r=>isRentedThisMonth(mk,r.id,i)&&effectiveStatusRenda(mk,r.id)==='Pago');
+  if(!rows.length){await customAlert('Sem rendas pagas em '+mk+'.');return;}
+  const ov=overlayCard('Recibos de '+mk+' ('+rows.length+')','<div id="rcList"></div>');const l=ov.querySelector('#rcList');
+  rows.forEach(r=>{const amt=Number(effectiveTotalPagar(mk,r.id))||0,d=document.createElement('div');d.style.cssText='display:flex;justify-content:space-between;align-items:center;gap:6px;padding:6px 0;font-size:13px;border-bottom:1px solid rgba(128,128,128,.25)';d.innerHTML='<span>'+escapeHTML((state.tenants[r.id]||{}).nome||('Quarto '+r.id))+' · '+fmt(amt)+'</span>';
+    [['Recibo',()=>openReceiptWindow(r.id,mk,amt)],['WhatsApp',()=>openWhatsAppToNumber(tenantPhone(r.id),buildReceiptWhatsAppMsg(r.id,mk,amt))]].forEach(([t,f])=>{const b=document.createElement('button');b.type='button';b.className='inq-filter-btn';b.textContent=t;b.onclick=f;d.appendChild(b);});l.appendChild(d);});
+}
+{const st=document.getElementById('bankReconcileStatus');if(st&&st.parentNode){const b=document.createElement('button');b.type='button';b.className='btn small';b.textContent='Conciliar automaticamente';b.onclick=autoReconcileBank;st.parentNode.insertBefore(b,st);}}
 
-</script> <!-- Esta é a última tag de fecho do script do seu ficheiro -->
-// --- FUNÇÕES DA FIREBASE ---
-    async function saveToFirebase(storeData) {
-      if (!window.firebaseDB || !window.FirebaseFirestore) return;
-      try {
-        const { doc, setDoc } = window.FirebaseFirestore;
-        await setDoc(doc(window.firebaseDB, "imoveis", "valenca_principal"), {
-          updatedAt: new Date().toISOString(),
-          payload: storeData
-        });
-      } catch (err) {
-        console.error("Erro ao escrever dados na Firebase:", err);
-      }
+/* ===== Montra pública, fotos e candidatos ===== */
+const SH=()=>{state.showcase=state.showcase||{houses:{},rooms:{},whatsapp:''};state.showcase.houses=state.showcase.houses||{};state.showcase.rooms=state.showcase.rooms||{};return state.showcase;};
+function compressImage(file,maxW,q){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>{const im=new Image();im.onload=()=>{const sc=Math.min(1,maxW/im.width),c=document.createElement('canvas');c.width=Math.round(im.width*sc);c.height=Math.round(im.height*sc);c.getContext('2d').drawImage(im,0,0,c.width,c.height);let qq=q,d=c.toDataURL('image/jpeg',qq);while(d.length>380000&&qq>0.35){qq-=0.1;d=c.toDataURL('image/jpeg',qq);}res(d);};im.onerror=rej;im.src=r.result;};r.onerror=rej;r.readAsDataURL(file);});}
+async function uploadPhotos(target,house,files){
+  const F=window.__fb;if(!F||!F.uid){await customAlert('Entra primeiro na nuvem (botão ☁ no topo).');return 0;}const sh=SH();let list;
+  if(target.startsWith('H:')){const h=target.slice(2);sh.houses[h]=sh.houses[h]||{};list=sh.houses[h].fotos=sh.houses[h].fotos||[];}else{sh.rooms[target]=sh.rooms[target]||{};list=sh.rooms[target].fotos=sh.rooms[target].fotos||[];}
+  let n=0;for(const f of files){const d=await compressImage(f,1000,0.72),id='p'+Date.now().toString(36)+Math.random().toString(36).slice(2,5);await F.db.collection('publicPhotos').doc(id).set({target:String(target),house,data:d,at:new Date().toISOString()});list.push(id);n++;}await saveState();return n;
+}
+async function deletePhoto(target,id){
+  const F=window.__fb,sh=SH();
+  let o;
+  if(target.startsWith('H:')){const h=target.slice(2);sh.houses[h]=sh.houses[h]||{};o=sh.houses[h];}
+  else{sh.rooms[target]=sh.rooms[target]||{};o=sh.rooms[target];}
+  o.fotos=(o.fotos||[]).filter(x=>x!==id);
+  try{if(F&&F.db)await F.db.collection('publicPhotos').doc(id).delete();}catch(e){console.warn('deletePhoto firestore',e);}
+  await saveState();
+}
+/** Miniatura com botão apagar — montra */
+function photoThumbEl(target,id,dataUrl,onDeleted){
+  const wrap=document.createElement('div');
+  wrap.style.cssText='position:relative;display:inline-block;margin:4px 6px 4px 0;vertical-align:top';
+  wrap.dataset.photoId=id;
+  const img=document.createElement('img');
+  img.src=dataUrl||'';
+  img.alt='Foto';
+  img.style.cssText='height:88px;width:auto;max-width:140px;object-fit:cover;border-radius:8px;display:block;background:#1a2233';
+  const btn=document.createElement('button');
+  btn.type='button';
+  btn.textContent='✕';
+  btn.title='Apagar esta foto';
+  btn.style.cssText='position:absolute;top:4px;right:4px;width:26px;height:26px;border:0;border-radius:50%;background:rgba(0,0,0,.72);color:#fff;font-size:14px;cursor:pointer;line-height:1';
+  btn.onclick=async(e)=>{
+    e.preventDefault();e.stopPropagation();
+    if(!await customConfirm('Apagar esta foto? Deixa de aparecer na montra.','Apagar foto'))return;
+    btn.disabled=true;
+    try{
+      await deletePhoto(target,id);
+      wrap.remove();
+      if(typeof onDeleted==='function')onDeleted(id);
+      if(typeof showSaveToast==='function')showSaveToast(true,'Foto apagada');
+    }catch(err){
+      btn.disabled=false;
+      await customAlert('Não foi possível apagar: '+(err.message||err));
     }
-
-    function initFirebaseRealtimeSync(applyRemoteDataCallback) {
-      if (!window.firebaseDB || !window.FirebaseFirestore) {
-        setTimeout(() => initFirebaseRealtimeSync(applyRemoteDataCallback), 1000);
-        return;
+  };
+  wrap.appendChild(img);wrap.appendChild(btn);return wrap;
+}
+async function fillPhotoGallery(galleryEl,target,ids){
+  if(!galleryEl)return;
+  galleryEl.innerHTML='';
+  const F=window.__fb;
+  const list=Array.isArray(ids)?ids.slice():[];
+  if(!list.length){
+    galleryEl.innerHTML='<span style="font-size:11px;opacity:.65">Sem fotos. Usa «📷 Adicionar».</span>';
+    return;
+  }
+  if(!F||!F.db){
+    galleryEl.innerHTML='<span style="font-size:11px;opacity:.65">'+list.length+' foto(s) (entra na nuvem para pré-visualizar/apagar)</span>';
+    return;
+  }
+  for(const id of list){
+    try{
+      const snap=await F.db.collection('publicPhotos').doc(id).get();
+      if(!snap.exists){
+        /* id órfão — remove da lista local */
+        await deletePhoto(target,id);
+        continue;
       }
-      const { doc, onSnapshot } = window.FirebaseFirestore;
-      onSnapshot(doc(window.firebaseDB, "imoveis", "valenca_principal"), (docSnap) => {
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          if (data && data.payload) {
-            applyRemoteDataCallback(data.payload);
-          }
-        }
-      }, (error) => {
-        console.error("Erro no listener da Firebase:", error);
-      });
+      const data=snap.data().data;
+      galleryEl.appendChild(photoThumbEl(target,id,data,()=>{
+        const parent=galleryEl.parentElement;
+        const cnt=parent&&parent.querySelector('[data-photo-count="'+cssEscape(target)+'"]');
+        const left=galleryEl.querySelectorAll('[data-photo-id]').length;
+        if(cnt)cnt.textContent=left+' foto(s)';
+        if(!left)galleryEl.innerHTML='<span style="font-size:11px;opacity:.65">Sem fotos. Usa «📷 Adicionar».</span>';
+      }));
+    }catch(e){console.warn('fillPhotoGallery',id,e);}
+  }
+  if(!galleryEl.querySelector('[data-photo-id]')){
+    galleryEl.innerHTML='<span style="font-size:11px;opacity:.65">Sem fotos. Usa «📷 Adicionar».</span>';
+  }
+}
+async function publishShowcase(){
+  const F=window.__fb;if(!F||!F.uid){await customAlert('Entra primeiro na nuvem (botão ☁ no topo).');return -1;}const sh=SH(),rooms=[];
+  state.rooms.forEach(r=>{const ro=sh.rooms[r.id];if(!ro||!ro.publish)return;const t=state.tenants[r.id]||{},vago=currentAutoStatus(r.id)==='vago',du=t.data_final?daysUntil(t.data_final):null;
+    rooms.push({id:String(r.id),house:r.house,preco:Number(ro.preco)||0,caucao:Number(ro.caucao)||0,entrada:(Number(ro.preco)||0)+(Number(ro.caucao)||0),area:ro.area||'',cama:ro.cama||'',wc:ro.wc||'',desc:ro.desc||'',livre:vago||(du!=null&&du<=60),desde:vago?todayISO():(t.data_final||''),fotos:ro.fotos||[]});});
+  const houses={};['baixo','cima'].forEach(h=>{const x=sh.houses[h]||{};houses[h]={nome:x.nome||h,zona:x.zona||'',desc:x.desc||'',regras:x.regras||'',lavandaria:x.lavandaria||'',cozinha:x.cozinha||'',estac:x.estac||'',chaves:x.chaves||'',seguranca:x.seguranca||'',estPessoa:estPessoa(h),fotos:x.fotos||[]};});
+  await F.db.collection('public').doc('casa').set({updatedAt:new Date().toISOString(),whatsapp:sh.whatsapp||'',houses,rooms});return rooms.length;
+}
+async function openShowcaseEditor(){
+  const sh=SH(),inp='width:100%;box-sizing:border-box;padding:6px;margin:3px 0;border-radius:6px;border:1px solid #2a3550;background:#0a0e17;color:#fff;font-size:12px';
+  const photoBlock=(target,house,fotos)=>'<div style="margin-top:6px"><label class="inq-filter-btn" style="display:inline-block;margin:4px 0">📷 Adicionar fotos <input type="file" accept="image/*" multiple hidden data-photo="'+escapeHTML(String(target))+'" data-house="'+escapeHTML(String(house||''))+'"></label> <span data-photo-count="'+escapeHTML(String(target))+'" style="font-size:11px">'+((fotos||[]).length)+' foto(s)</span><div data-photo-gallery="'+escapeHTML(String(target))+'" style="margin-top:6px;min-height:24px"></div></div>';
+  let h='<p style="font-size:12px;opacity:.75;margin:0 0 8px">Só publica o que marcares. Nunca são enviados nomes, rendas pagas nem dados pessoais.<br>Podes <b>pré-visualizar e apagar</b> fotos com o botão ✕ em cada miniatura.</p><label style="font-size:12px">WhatsApp de contacto (com indicativo)</label><input id="shWa" style="'+inp+'" value="'+escapeHTML(sh.whatsapp||'')+'">';
+  ['baixo','cima'].forEach(k=>{const x=sh.houses[k]||{};h+='<div style="border-top:1px solid #2a3550;margin-top:10px;padding-top:8px"><b>Casa '+k+'</b><input data-h="'+k+'" data-f="nome" placeholder="Nome público" style="'+inp+'" value="'+escapeHTML(x.nome||'')+'"><input data-h="'+k+'" data-f="zona" placeholder="Zona / morada aproximada" style="'+inp+'" value="'+escapeHTML(x.zona||'')+'"><textarea data-h="'+k+'" data-f="desc" placeholder="Descrição da casa, cozinha, áreas comuns" style="'+inp+'">'+escapeHTML(x.desc||'')+'</textarea><textarea data-h="'+k+'" data-f="regras" placeholder="Regras da casa" style="'+inp+'">'+escapeHTML(x.regras||'')+'</textarea>'+[['lavandaria','Lavandaria (máquinas, horários)'],['cozinha','Cozinha (equipamento, utilização)'],['estac','Estacionamento'],['chaves','Chaves (cópias, perda)'],['seguranca','Segurança (alarme, câmaras, portão)']].map(([f,ph])=>'<textarea data-h="'+k+'" data-f="'+f+'" placeholder="'+ph+'" style="'+inp+'">'+escapeHTML(x[f]||'')+'</textarea>').join('')+photoBlock('H:'+k,k,x.fotos)+'</div>';});
+  state.rooms.forEach(r=>{const o=sh.rooms[r.id]||{};h+='<div style="border-top:1px solid #2a3550;margin-top:10px;padding-top:8px"><label><input type="checkbox" data-r="'+r.id+'" data-f="publish" '+(o.publish?'checked':'')+'> <b>Quarto '+escapeHTML(String(r.id))+'</b> ('+escapeHTML(r.house||'')+')</label><input data-r="'+r.id+'" data-f="preco" type="number" placeholder="Preço € / mês" style="'+inp+'" value="'+(o.preco||'')+'"><input data-r="'+r.id+'" data-f="caucao" type="number" placeholder="Caução €" style="'+inp+'" value="'+(o.caucao||'')+'"><input data-r="'+r.id+'" data-f="area" placeholder="Área (m²)" style="'+inp+'" value="'+escapeHTML(o.area||'')+'"><input data-r="'+r.id+'" data-f="cama" placeholder="Cama (solteiro/casal)" style="'+inp+'" value="'+escapeHTML(o.cama||'')+'"><input data-r="'+r.id+'" data-f="wc" placeholder="Casa de banho (privada/partilhada)" style="'+inp+'" value="'+escapeHTML(o.wc||'')+'"><textarea data-r="'+r.id+'" data-f="desc" placeholder="Descrição, mobília, despesas incluídas" style="'+inp+'">'+escapeHTML(o.desc||'')+'</textarea>'+photoBlock(String(r.id),r.house||'',o.fotos)+'</div>';});
+  const ov=overlayCard('Montra de quartos',h,[['Guardar e publicar',async()=>{}]]);
+  const save=()=>{sh.whatsapp=ov.querySelector('#shWa').value.trim();ov.querySelectorAll('[data-h]').forEach(e=>{sh.houses[e.dataset.h]=sh.houses[e.dataset.h]||{};sh.houses[e.dataset.h][e.dataset.f]=e.value;});ov.querySelectorAll('[data-r]').forEach(e=>{const o=sh.rooms[e.dataset.r]=sh.rooms[e.dataset.r]||{};o[e.dataset.f]=e.type==='checkbox'?e.checked:e.value;});};
+  const refreshCount=(target)=>{
+    const cnt=ov.querySelector('[data-photo-count="'+cssEscape(target)+'"]');
+    let n=0;
+    if(target.startsWith('H:'))n=((sh.houses[target.slice(2)]||{}).fotos||[]).length;
+    else n=((sh.rooms[target]||{}).fotos||[]).length;
+    if(cnt)cnt.textContent=n+' foto(s)';
+  };
+  /* carregar galerias existentes */
+  const galleries=[...ov.querySelectorAll('[data-photo-gallery]')];
+  for(const g of galleries){
+    const target=g.getAttribute('data-photo-gallery');
+    let ids=[];
+    if(target.startsWith('H:'))ids=((sh.houses[target.slice(2)]||{}).fotos||[]).slice();
+    else ids=((sh.rooms[target]||{}).fotos||[]).slice();
+    await fillPhotoGallery(g,target,ids);
+    refreshCount(target);
+  }
+  ov.querySelectorAll('input[data-photo]').forEach(f=>f.onchange=async()=>{
+    save();
+    const target=f.dataset.photo,house=f.dataset.house,files=[...f.files];
+    f.value='';
+    if(!files.length)return;
+    const n=await uploadPhotos(target,house,files);
+    if(n){
+      showSaveToast(true,n+' foto(s) enviada(s)');
+      const g=ov.querySelector('[data-photo-gallery="'+cssEscape(target)+'"]');
+      let ids=[];
+      if(target.startsWith('H:'))ids=((sh.houses[target.slice(2)]||{}).fotos||[]).slice();
+      else ids=((sh.rooms[target]||{}).fotos||[]).slice();
+      await fillPhotoGallery(g,target,ids);
+      refreshCount(target);
     }
+  });
+  const pb=[...ov.querySelectorAll('button')].find(b=>b.textContent==='Guardar e publicar');
+  pb.onclick=async(e)=>{e.stopPropagation();save();await saveState();const n=await publishShowcase();if(n>=0){showSaveToast(true,'Montra publicada: '+n+' quarto(s)');}};
+}
+async function showCandidates(){
+  const F=window.__fb;if(!F||!F.uid){await customAlert('Entra primeiro na nuvem (botão ☁ no topo).');return;}
+  const snap=await F.db.collection('candidatos').orderBy('at','desc').limit(50).get(),rows=[];snap.forEach(d=>rows.push({id:d.id,...d.data()}));
+  if(!rows.length){await customAlert('Ainda não há candidatos.');return;}
+  const est=['novo','contactado','visita marcada','aceite','recusado'],ov=overlayCard('Candidatos ('+rows.length+')','<div id="candList"></div>');const l=ov.querySelector('#candList');
+  rows.forEach(c=>{const d=document.createElement('div');d.style.cssText='padding:8px 0;border-bottom:1px solid rgba(128,128,128,.25);font-size:12px';d.innerHTML='<b>'+escapeHTML(c.nome||'')+'</b> · '+escapeHTML(c.contacto||'')+'<br>Quarto '+escapeHTML(String(c.roomId||'—'))+' · entrada '+escapeHTML(c.entrada||'—')+' · '+escapeHTML(c.ocupacao||'')+'<br><i>'+escapeHTML((c.mensagem||'').slice(0,160))+'</i><br>';
+    const sel=document.createElement('select');est.forEach(e=>{const o=document.createElement('option');o.textContent=e;if((c.estado||'novo')===e)o.selected=true;sel.appendChild(o);});sel.onchange=()=>F.db.collection('candidatos').doc(c.id).update({estado:sel.value});d.appendChild(sel);
+    const w=document.createElement('button');w.type='button';w.className='inq-filter-btn';w.textContent='WhatsApp';w.onclick=()=>openWhatsAppToNumber(String(c.contacto||'').replace(/[^\d+]/g,''),'Olá '+(c.nome||'')+', obrigado pelo interesse no quarto '+(c.roomId||'')+'.');d.appendChild(w);
+    const x=document.createElement('button');x.type='button';x.className='inq-filter-btn';x.textContent='Apagar';x.onclick=async()=>{if(await customConfirm('Apagar este candidato?','Apagar')){await F.db.collection('candidatos').doc(c.id).delete();d.remove();}};d.appendChild(x);l.appendChild(d);});
+}
 
-    // --- ATIVAÇÃO AUTOMÁTICA (COLE ISTO TAMBÉM AQUI) ---
-    // Isto diz à app para arrancar a escutar a Firebase e atualizar o ecrã automaticamente
-    initFirebaseRealtimeSync(function(remoteData) {
-      if (typeof store !== 'undefined') {
-        store = remoteData;
-        if (typeof renderApp === 'function') renderApp();
-        else if (typeof render === 'function') render();
-        else if (typeof atualizarEcra === 'function') atualizarEcra();
-      }
-    });
+/* ===== Portal do inquilino (links secretos, só leitura) ===== */
+function portalToken(rid){const t=state.tenants[rid];if(!t.portalToken){const a=new Uint8Array(20);crypto.getRandomValues(a);t.portalToken=[...a].map(b=>b.toString(36).padStart(2,'0')).join('').slice(0,30);}return t.portalToken;}
+function portalLink(rid){return new URL('portal.html',location.href).href.split('#')[0]+'?t='+portalToken(rid);}
+function portalDoc(rid){
+  const t=state.tenants[rid]||{},cur=currentRealMonthIndex(),li=state.landlordInfo||{},months=[],key=re=>Object.keys(li).find(k=>re.test(k));
+  MONTH_KEYS.forEach((mk,k)=>{if(k>cur||!isRentedThisMonth(mk,rid,k))return;months.push({mk,v:Number(effectiveTotalPagar(mk,rid))||0,pago:effectiveStatusRenda(mk,rid)==='Pago'});});
+  return {quarto:String(rid),nome:String(t.nome||'').split(' ')[0],renda:Number(t.renda)||0,mesAtual:months.find(m=>m.mk===MONTH_KEYS[cur])||null,meses:months.slice(-6),iban:String(li[key(/iban/i)]||''),titular:String(li[key(/titular|senhorio|nome/i)]||''),referencia:String((t.fiscal||{}).referencia||''),penal:Number(li.lateFeePercent)||0,fim:t.data_final||'',whatsapp:(state.showcase||{}).whatsapp||'',at:new Date().toISOString()};
+}
+async function publishPortal(silent){
+  const F=window.__fb;if(!F||!F.uid){if(!silent)await customAlert('Entra primeiro na nuvem (botão ☁ no topo).');return -1;}let n=0;
+  for(const r of state.rooms){const t=state.tenants[r.id];if(!t||!t.portalToken||currentAutoStatus(r.id)==='vago')continue;await F.db.collection('portal').doc(t.portalToken).set(portalDoc(r.id));n++;}return n;
+}
+let __portalTimer=null;{const _s2=saveState;saveState=async function(...a){const r=await _s2.apply(this,a);if(r!==false&&Object.values(state.tenants||{}).some(t=>t&&t.portalToken)){clearTimeout(__portalTimer);__portalTimer=setTimeout(()=>publishPortal(true).catch(()=>{}),4000);}return r;};}
+async function openPortalManager(){
+  const ov=overlayCard('Portal do inquilino','<p style="font-size:12px;opacity:.75;margin:0 0 8px">Cada link é secreto e mostra só a renda e o estado desse inquilino. Quem tiver o link vê esses dados: envia só ao próprio.</p><div id="ptList"></div>',[['Publicar agora',async()=>{const n=await publishPortal();if(n>=0)showSaveToast(true,n+' portal(is) atualizado(s)');}]]);const l=ov.querySelector('#ptList');
+  state.rooms.filter(r=>currentAutoStatus(r.id)!=='vago'&&state.tenants[r.id]).forEach(r=>{const t=state.tenants[r.id],d=document.createElement('div');d.style.cssText='padding:7px 0;border-bottom:1px solid rgba(128,128,128,.25);font-size:13px';d.innerHTML='<b>'+escapeHTML(t.nome||'')+'</b> · quarto '+escapeHTML(String(r.id))+'<br>';
+    const mk=(txt,f)=>{const b=document.createElement('button');b.type='button';b.className='inq-filter-btn';b.textContent=txt;b.onclick=f;d.appendChild(b);};
+    mk('Copiar link',async()=>{const u=portalLink(r.id);await saveState();await publishPortal(true).catch(()=>{});try{await navigator.clipboard.writeText(u);}catch(e){}showSaveToast(true,'Link copiado');});
+    mk('WhatsApp',async()=>{const u=portalLink(r.id);await saveState();await publishPortal(true).catch(()=>{});openWhatsAppToNumber(tenantPhone(r.id),'Olá '+String(t.nome||'').split(' ')[0]+', aqui tens o teu portal com a renda e o estado dos pagamentos, e podes enviar comprovativos ou pedidos de manutenção: '+u);});
+    mk('Revogar',async()=>{if(!await customConfirm('Revogar o link de '+(t.nome||'')+'? O link atual deixa de funcionar.','Revogar'))return;const F=window.__fb;try{if(F&&F.uid&&t.portalToken)await F.db.collection('portal').doc(t.portalToken).delete();}catch(e){}delete t.portalToken;await saveState();showSaveToast(true,'Link revogado');});l.appendChild(d);});
+}
+async function showRequests(){
+  const F=window.__fb;if(!F||!F.uid){await customAlert('Entra primeiro na nuvem (botão ☁ no topo).');return;}
+  const snap=await F.db.collection('pedidos').orderBy('at','desc').limit(50).get(),rows=[];snap.forEach(d=>rows.push({id:d.id,...d.data()}));if(!rows.length){await customAlert('Sem pedidos dos inquilinos.');return;}
+  const est=['novo','em curso','resolvido'],ov=overlayCard('Pedidos ('+rows.length+')','<div id="rqList"></div>'),l=ov.querySelector('#rqList');
+  rows.forEach(c=>{const d=document.createElement('div');d.style.cssText='padding:8px 0;border-bottom:1px solid rgba(128,128,128,.25);font-size:12px';d.innerHTML='<b>'+escapeHTML(c.tipo||'')+'</b> · quarto '+escapeHTML(String(c.quarto||''))+(c.mes?' · '+escapeHTML(c.mes):'')+' · '+escapeHTML(String(c.at||'').slice(0,10))+'<br>'+escapeHTML((c.texto||'').slice(0,200))+'<br>'+(c.foto?'<img src="'+c.foto+'" style="max-width:100%;max-height:160px;border-radius:6px;margin:4px 0"><br>':'');
+    const sel=document.createElement('select');est.forEach(e=>{const o=document.createElement('option');o.textContent=e;if((c.estado||'novo')===e)o.selected=true;sel.appendChild(o);});sel.onchange=()=>F.db.collection('pedidos').doc(c.id).update({estado:sel.value});d.appendChild(sel);
+    if(c.tipo==='comprovativo'&&c.mes&&MONTH_KEYS.includes(c.mes)){const b=document.createElement('button');b.type='button';b.className='inq-filter-btn';b.textContent='Marcar renda paga';b.onclick=async()=>{if(await customConfirm('Confirmas que viste o pagamento na conta? Marca '+c.mes+' do quarto '+c.quarto+' como pago.','Marcar pago')){if(await setPanelPaymentStatus('renda',String(c.quarto),'Pago',c.mes,{date:localDateString(),method:'Comprovativo (portal)'})){sel.value='resolvido';F.db.collection('pedidos').doc(c.id).update({estado:'resolvido'});}}};d.appendChild(b);}
+    l.appendChild(d);});
+}
 
-  </script>
+/* ===== Portal v2: despesas, NIBs/MB Way por inquilino, histórico completo, revogação automática ===== */
+portalDoc=function(rid){
+  const t=state.tenants[rid]||{},li=state.landlordInfo||{},cur=currentRealMonthIndex(),room=state.rooms.find(r=>String(r.id)===String(rid))||{},h=room.house,mk=MONTH_KEYS[cur],cats=['Água','Luz','Internet'];
+  const ibans=(li.ibans&&li.ibans.length)?li.ibans:[{label:'Principal',iban:li.iban||''}],ib=ibans[Math.min(Number(t.portalIban)||0,ibans.length-1)]||ibans[0];
+  const meses=[];MONTH_KEYS.forEach((m,k)=>{if(k>cur||!isRentedThisMonth(m,rid,k))return;meses.push({mk:m,r:Number(effectiveTotalPagar(m,rid))||0,rp:effectiveStatusRenda(m,rid)==='Pago',d:Number(effectiveExpenseAlloc(m,rid))||0,dp:effectiveStatusDespesas(m,rid)==='Pago'});});
+  const now=meses.find(x=>x.mk===mk)||null,bill=houseUtilityTotal(mk,h),ratio=bill>0&&now?now.d/bill:0,sum=(c,k)=>(state.expenses||[]).filter(e=>e.house===h&&e.category===c&&e.monthIdx===k).reduce((a,e)=>a+(Number(e.amount)||0),0);
+  const det=cats.map(c=>({c,v:Math.round(sum(c,cur)*ratio*100)/100})),casa=MONTH_KEYS.slice(0,cur+1).map((m,k)=>({mk:m,v:Math.round(cats.reduce((a,c)=>a+sum(c,k),0)*100)/100}));
+  return {quarto:String(rid),nome:String(t.nome||'').split(' ')[0],inicio:t.data_inicio||'',fim:t.data_final||'',renda:Number(t.renda)||0,mes:mk,now,det,total:now?now.r+now.d:0,meses,iban:ib.iban||'',ibanLabel:ib.label||'',titular:String(li.nome||''),mbway:String(li.mbway||''),mbwayRenda:!!t.mbwayRenda,dinheiro:t.cashOk!==false,referencia:String((t.fiscal||{}).referencia||''),penal:Number(li.lateFeePercent)||0,whatsapp:(state.showcase||{}).whatsapp||'',casa:{nome:((state.showcase||{}).houses||{})[h]&&state.showcase.houses[h].nome||('Casa '+h),mensal:casa},at:new Date().toISOString()};
+};
+async function revokeExpiredPortals(){
+  const F=window.__fb;if(!F||!F.uid)return 0;let n=0;
+  for(const [rid,t] of Object.entries(state.tenants||{})){if(!t||!t.portalToken)continue;const ended=currentAutoStatus(rid)==='vago'||(t.data_final&&daysUntil(t.data_final)<0);if(!ended)continue;try{await F.db.collection('portal').doc(t.portalToken).delete();delete t.portalToken;n++;}catch(e){console.warn('revogar',e);}}
+  if(n){await saveState();if(typeof showSaveToast==='function')showSaveToast(true,n+' link(s) do portal revogado(s): contrato terminado');}return n;
+}
+{const _pp=publishPortal;publishPortal=async function(s2){await revokeExpiredPortals();return _pp(s2);};}
+async function openPaySettings(){
+  const li=state.landlordInfo=state.landlordInfo||{},inp='padding:6px;margin:3px 4px 3px 0;border-radius:6px;border:1px solid #2a3550;background:#0a0e17;color:#fff;font-size:12px',ibans=(li.ibans&&li.ibans.length)?li.ibans.map(x=>({...x})):[{label:'Principal',iban:li.iban||''}];
+  const ov=overlayCard('NIBs e pagamentos no portal','<div id="pcNibs"></div><button type="button" class="inq-filter-btn" id="pcAdd">+ NIB</button><div style="margin:8px 0"><label style="font-size:12px">MB Way (telemóvel do senhorio)</label><br><input id="pcMb" style="'+inp+'" value="'+escapeHTML(li.mbway||'')+'"></div><div id="pcT"></div>',[['Guardar',async()=>{}]]);
+  const nb=ov.querySelector('#pcNibs'),draw=()=>{nb.innerHTML='';ibans.forEach((x,i)=>{const d=document.createElement('div');d.innerHTML='<input data-l="'+i+'" placeholder="Nome (ex.: Conta Casa Baixo)" style="'+inp+';width:38%" value="'+escapeHTML(x.label||'')+'"><input data-i="'+i+'" placeholder="NIB / IBAN" style="'+inp+';width:56%" value="'+escapeHTML(x.iban||'')+'">';nb.appendChild(d);});};draw();
+  ov.querySelector('#pcAdd').onclick=()=>{ibans.push({label:'',iban:''});draw();};
+  const tl=ov.querySelector('#pcT');state.rooms.filter(r=>state.tenants[r.id]&&currentAutoStatus(r.id)!=='vago').forEach(r=>{const t=state.tenants[r.id],d=document.createElement('div');d.style.cssText='border-top:1px solid #2a3550;padding:6px 0;font-size:12px';d.dataset.rid=r.id;d.innerHTML='<b>'+escapeHTML(t.nome||('Quarto '+r.id))+'</b> · quarto '+escapeHTML(String(r.id))+'<br>NIB: <select data-s="nib" style="'+inp+'"></select><br><label><input type="checkbox" data-s="mbr" '+(t.mbwayRenda?'checked':'')+'> Pode pagar a renda por MB Way</label><br><label><input type="checkbox" data-s="cash" '+(t.cashOk!==false?'checked':'')+'> Pode pagar em dinheiro</label><br>Contrato: <select data-s="ren" style="'+inp+'"><option value="">Não indicado</option><option value="auto" '+(t.renovavel==='auto'?'selected':'')+'>Renova automaticamente</option><option value="acordo" '+(t.renovavel==='acordo'?'selected':'')+'>Renovável por acordo</option><option value="nao" '+(t.renovavel==='nao'?'selected':'')+'>Não renovável</option></select>';tl.appendChild(d);});
+  const fillSel=()=>tl.querySelectorAll('select[data-s="nib"]').forEach(sel=>{const rid=sel.closest('[data-rid]').dataset.rid,cur=Number((state.tenants[rid]||{}).portalIban)||0;sel.innerHTML='';ibans.forEach((x,i)=>{const o=document.createElement('option');o.value=i;o.textContent=(x.label||'NIB '+(i+1))+' '+(x.iban||'').slice(-4);if(i===cur)o.selected=true;sel.appendChild(o);});});fillSel();ov.querySelector('#pcAdd').addEventListener('click',fillSel);
+  const sb=[...ov.querySelectorAll('button')].find(b=>b.textContent==='Guardar');sb.onclick=async(e)=>{e.stopPropagation();ov.querySelectorAll('[data-l]').forEach(i=>ibans[i.dataset.l].label=i.value.trim());ov.querySelectorAll('[data-i]').forEach(i=>ibans[i.dataset.i].iban=i.value.trim());const clean=ibans.filter(x=>x.iban);li.ibans=clean;li.iban=(clean[0]||{}).iban||li.iban||'';li.mbway=ov.querySelector('#pcMb').value.trim();
+    tl.querySelectorAll('[data-rid]').forEach(d=>{const t=state.tenants[d.dataset.rid];t.portalIban=Number(d.querySelector('select').value)||0;t.mbwayRenda=d.querySelector('[data-s="mbr"]').checked;t.cashOk=d.querySelector('[data-s="cash"]').checked;t.renovavel=d.querySelector('[data-s="ren"]').value;});
+    await saveState();await publishPortal(true).catch(()=>{});ov.remove();showSaveToast(true,'Pagamentos do portal guardados');};
+}
 
+/* ===== Portal v3: gráficos individuais, fichas, outros quartos, caução, renovação, comunicados; link da montra ===== */
+function estPessoa(h){const ids=state.rooms.filter(r=>r.house===h).map(r=>r.id),pax=ids.reduce((a,r)=>a+(currentAutoStatus(r)!=='vago'?(Number((state.tenants[r]||{}).pax)||1):0),0);if(!pax)return 0;const cur=currentRealMonthIndex(),vals=[];for(let k=cur;k>=0&&vals.length<3;k--){const v=['Água','Luz','Internet'].reduce((a,c)=>a+(state.expenses||[]).filter(e=>e.house===h&&e.category===c&&e.monthIdx===k).reduce((x,e)=>x+(Number(e.amount)||0),0),0);if(v>0)vals.push(v);}return vals.length?Math.round(vals.reduce((a,b)=>a+b,0)/vals.length/pax*100)/100:0;}
+{const _pd=portalDoc;portalDoc=function(rid){
+  const d=_pd(rid),t=state.tenants[rid]||{},room=state.rooms.find(r=>String(r.id)===String(rid))||{},h=room.house,sh=state.showcase||{},cur=currentRealMonthIndex(),ex=state.expenses||[];
+  const sum=(c,k)=>Math.round(ex.filter(e=>e.house===h&&e.category===c&&e.monthIdx===k).reduce((a,e)=>a+(Number(e.amount)||0),0)*100)/100;
+  d.casa.mensal=MONTH_KEYS.slice(0,cur+1).map((m,k)=>{const a=sum('Água',k),l=sum('Luz',k),i=sum('Internet',k);return {mk:m,a,l,i,v:Math.round((a+l+i)*100)/100};});
+  const hi=(sh.houses||{})[h]||{},ro=(sh.rooms||{})[rid]||{};
+  d.ficha={area:ro.area||'',cama:ro.cama||'',wc:ro.wc||'',desc:ro.desc||''};d.casaInfo={desc:hi.desc||'',regras:hi.regras||'',lavandaria:hi.lavandaria||'',cozinha:hi.cozinha||'',estac:hi.estac||'',chaves:hi.chaves||'',seguranca:hi.seguranca||''};d.estPessoa=estPessoa(h);
+  d.quartos=state.rooms.filter(r=>r.house===h).map(r=>{const tt=state.tenants[r.id]||{},oc=currentAutoStatus(r.id)!=='vago';return {id:String(r.id),oc,pax:oc?(Number(tt.pax)||1):0};});
+  d.caucao={valor:Number(t.caucao)||0,pago:(t.caucaoPagamentos||[]).reduce((a,p)=>a+(Number(p.valor)||0),0),destino:t.caucaoDestino||'pendente',uso:t.data_final?t.data_final.slice(0,7):''};
+  d.contrato={renovavel:t.renovavel||'',aviso:t.prazoAviso||''};
+  d.avisos=(state.avisos||[]).filter(a=>(a.para==='todos'||String(a.para)===String(rid))&&(!a.ate||a.ate>=todayISO())).map(a=>({texto:a.texto,data:a.data,ind:a.para!=='todos'}));
+  return d;};}
+async function openAnnouncements(){
+  const inp='width:100%;box-sizing:border-box;padding:7px;margin:4px 0;border-radius:6px;border:1px solid #2a3550;background:#0a0e17;color:#fff;font-size:13px';state.avisos=state.avisos||[];
+  const ov=overlayCard('Comunicados do portal','<div id="anL"></div><textarea id="anT" rows="3" placeholder="Texto do comunicado" style="'+inp+'"></textarea><select id="anP" style="'+inp+'"><option value="todos">Todos os inquilinos</option>'+state.rooms.filter(r=>state.tenants[r.id]&&currentAutoStatus(r.id)!=='vago').map(r=>'<option value="'+escapeHTML(String(r.id))+'">Só '+escapeHTML((state.tenants[r.id].nome||'')+' (quarto '+r.id+')')+'</option>').join('')+'</select><input id="anD" type="number" placeholder="Validade em dias (vazio = sem fim)" style="'+inp+'">',[['Publicar',async()=>{}]]);
+  const l=ov.querySelector('#anL'),draw=()=>{l.innerHTML=state.avisos.length?'':'<small>Sem comunicados ativos.</small>';state.avisos.forEach(a=>{const d=document.createElement('div');d.style.cssText='padding:6px 0;border-bottom:1px solid rgba(128,128,128,.25);font-size:12px';d.innerHTML='<b>'+(a.para==='todos'?'Todos':'Quarto '+escapeHTML(String(a.para)))+'</b> · '+escapeHTML(a.data||'')+(a.ate?' até '+escapeHTML(a.ate):'')+'<br>'+escapeHTML(a.texto)+'<br>';const b=document.createElement('button');b.type='button';b.className='inq-filter-btn';b.textContent='Apagar';b.onclick=async()=>{state.avisos=state.avisos.filter(x=>x.id!==a.id);await saveState();publishPortal(true);draw();};d.appendChild(b);l.appendChild(d);});};draw();
+  const pb=[...ov.querySelectorAll('button')].find(b=>b.textContent==='Publicar');pb.onclick=async(e)=>{e.stopPropagation();const tx=ov.querySelector('#anT').value.trim();if(!tx)return;const n=Number(ov.querySelector('#anD').value)||0,ate=n?new Date(Date.now()+n*864e5).toISOString().slice(0,10):'';state.avisos.push({id:featureId('av'),texto:tx,para:ov.querySelector('#anP').value,data:todayISO(),ate});await saveState();await publishPortal(true).catch(()=>{});ov.querySelector('#anT').value='';draw();showSaveToast(true,'Comunicado publicado');};
+}
+async function shareShowcaseLink(){
+  const link=new URL('quartos.html',location.href).href,ov=overlayCard('Link da montra de quartos','<p style="font-size:13px;word-break:break-all"><b>'+escapeHTML(link)+'</b></p><p style="font-size:12px;opacity:.75">Envia este link aos candidatos. Só aparecem os quartos marcados como publicados.</p>',[['Copiar link',async()=>{try{await navigator.clipboard.writeText(link);showSaveToast(true,'Link copiado');}catch(e){await customAlert(link);}}],['Partilhar / WhatsApp',()=>{if(navigator.share)navigator.share({title:'Quartos disponíveis',url:link}).catch(()=>{});else window.open('https://wa.me/?text='+encodeURIComponent('Quartos disponíveis: '+link),'_blank');}]]);
+}
 
+/* ===== Limpeza da casa + Pedidos e reservas (v2: vários quartos por dia, lista editável) ===== */
+const DIAS=['Seg','Ter','Qua','Qui','Sex','Sáb','Dom'],isoD=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'),wdOf=ds=>(new Date(ds+'T00:00:00').getDay()+6)%7;
+const CAT0=[{id:'c1',nome:'Churrasqueira',tipo:'reserva',casa:'ambas',data:true,ativo:true},{id:'c2',nome:'Convidados / visita',tipo:'pedido',casa:'ambas',data:true,ativo:true},{id:'c3',nome:'Festa / jantar',tipo:'reserva',casa:'ambas',data:true,ativo:true},{id:'c4',nome:'Estacionamento',tipo:'pedido',casa:'ambas',data:true,ativo:true},{id:'c5',nome:'Outro pedido',tipo:'pedido',casa:'ambas',data:false,ativo:true}];
+function CATALOGO(){if(!state.catalogo||!state.catalogo.length)state.catalogo=JSON.parse(JSON.stringify(CAT0));return state.catalogo;}
+function LP(){const L=state.limpeza=state.limpeza||{};L.escala=L.escala||{baixo:{},cima:{}};L.escala.baixo=L.escala.baixo||{};L.escala.cima=L.escala.cima||{};L.registo=L.registo||{};return L;}
+const escRooms=e=>e?(e.rooms||(e.room?[e.room]:[])).map(String).filter(Boolean):[];
+function limpezaDays(h,n){const L=LP(),out=[],seen=new Set(),t=new Date();t.setHours(0,0,0,0);const lim=isoD(new Date(t.getTime()-n*864e5));Object.entries(L.registo).forEach(([k,r])=>{const [ds,hh,room]=k.split('|');if(hh===h&&ds>=lim){out.push({data:ds,room,feito:!!r.feito,por:r.por||'',em:r.at||''});seen.add(k);}});for(let i=n;i>=0;i--){const d=new Date(t);d.setDate(t.getDate()-i);const ds=isoD(d);escRooms(L.escala[h][wdOf(ds)]).forEach(r=>{if(!seen.has(ds+'|'+h+'|'+r))out.push({data:ds,room:r,feito:null,por:'',em:''});});}return out.sort((x,y)=>x.data.localeCompare(y.data));}
+async function syncTenantInputs(){
+  const F=window.__fb;if(!F||!F.uid)return 0;const snap=await F.db.collection('pedidos').orderBy('at','desc').limit(100).get(),rev={};Object.entries(state.tenants||{}).forEach(([rid,t])=>{if(t&&t.portalToken)rev[t.portalToken]=rid;});
+  const L=LP();state.reservas=state.reservas||[];let n=0;const upd=[];
+  snap.forEach(d=>{const c=d.data();if(c.estado!=='novo'||!(c.tipo==='limpeza'||c.tipo==='reserva'))return;const rid=rev[c.token];if(!rid)return;const room=state.rooms.find(r=>String(r.id)===String(rid)),h=room&&room.house;
+    if(c.tipo==='limpeza'){const [dt,st]=String(c.texto).split('|'),ok=h&&/^\d{4}-\d{2}-\d{2}$/.test(dt)&&escRooms(L.escala[h][wdOf(dt)]).includes(String(rid));if(ok){L.registo[dt+'|'+h+'|'+rid]={feito:st==='feito',by:'inquilino',nome:String((state.tenants[rid]||{}).nome||''),at:c.at};n++;}}
+    else{const [tp,dt,nota]=String(c.texto).split('|');state.reservas.push({id:featureId('rs'),rid:String(rid),house:h,tipo:tp||'Outro',data:/^\d{4}-\d{2}-\d{2}$/.test(dt||'')?dt:'',nota:(nota||'').slice(0,120),estado:'pendente',at:c.at});n++;}upd.push(d.id);});
+  for(const id of upd){try{await F.db.collection('pedidos').doc(id).update({estado:'importado'});}catch(e){}}
+  const lim=isoD(new Date(Date.now()-92*864e5));Object.keys(L.registo).forEach(k=>{if(k.slice(0,10)<lim)delete L.registo[k];});
+  if(n){await saveState();publishPortal(true);}return n;
+}
+setInterval(()=>{try{syncTenantInputs().catch(()=>{});}catch(e){}},300000);
+{const _pd2=portalDoc;portalDoc=function(rid){
+  const d=_pd2(rid),room=state.rooms.find(r=>String(r.id)===String(rid))||{},h=room.house,L=LP(),td=todayISO();
+  d.limpeza={escala:DIAS.map((_,i)=>({d:i,rooms:escRooms((L.escala[h]||{})[i]),tarefa:((L.escala[h]||{})[i]||{}).tarefa||''})),registo:limpezaDays(h,92)};
+  const rs=state.reservas||[];d.reservas=rs.filter(r=>r.house===h&&(r.estado==='aprovada'||r.estado==='pendente')&&(!r.data||r.data>=td)).sort((a,b)=>(a.data||'9').localeCompare(b.data||'9')).slice(0,40).map(r=>({tipo:r.tipo,data:r.data||'',quarto:r.rid,nota:r.nota||'',estado:r.estado}));
+  d.minhasReservas=rs.filter(r=>String(r.rid)===String(rid)).sort((a,b)=>(b.at||'').localeCompare(a.at||'')).slice(0,15).map(r=>({tipo:r.tipo,data:r.data||'',estado:r.estado}));
+  d.catalogo=CATALOGO().filter(c=>c.ativo&&(c.casa==='ambas'||c.casa===h)).map(c=>({nome:c.nome,tipo:c.tipo,data:!!c.data}));return d;};}
+const fdate=ds=>ds.split('-').reverse().join('/');
+function regList(h){const L=LP();return Object.entries(L.registo).map(([k,v])=>{const [ds,hh,r]=k.split('|');return {k,ds,h:hh,r,...v};}).filter(x=>!h||x.h===h).sort((a,b)=>b.ds.localeCompare(a.ds));}
+async function openLimpeza(){
+  try{await syncTenantInputs();}catch(e){}
+  const L=LP();let house='baixo';const ov=overlayCard('Limpeza da casa','<div id="lpTabs"></div><div id="lpBody"></div>'),tabs=ov.querySelector('#lpTabs'),body=ov.querySelector('#lpBody'),inp='padding:5px;margin:2px;border-radius:6px;border:1px solid #2a3550;background:#0a0e17;color:#fff;font-size:12px';
+  const draw=()=>{tabs.innerHTML='';['baixo','cima'].forEach(h=>{const b=document.createElement('button');b.type='button';b.className='inq-filter-btn';b.style.cssText='margin-right:6px;'+(h===house?'outline:2px solid #35d4ff':'');b.textContent='Casa '+h;b.onclick=()=>{house=h;draw();};tabs.appendChild(b);});
+    const rooms=state.rooms.filter(r=>r.house===house),sc=L.escala[house],nm=r=>((state.tenants[r]||{}).nome||'').split(' ')[0],opt=(sel)=>'<option value="">—</option>'+rooms.map(r=>'<option value="'+escapeHTML(String(r.id))+'" '+(String(sel)===String(r.id)?'selected':'')+'>Quarto '+escapeHTML(String(r.id))+(nm(r.id)?' · '+escapeHTML(nm(r.id)):'')+'</option>').join('');
+    let h='<p style="font-size:12px;opacity:.75;margin:8px 0 0">'+rooms.length+' quartos · cada dia pode ter até 2 quartos. Os inquilinos confirmam no portal; aqui só vês quem limpou.</p><h4 style="margin:10px 0 4px">Escala semanal</h4>';
+    DIAS.forEach((dn,i)=>{const e=escRooms(sc[i]);h+='<div style="display:flex;gap:3px;align-items:center;font-size:12px;flex-wrap:wrap"><b style="width:30px">'+dn+'</b><select data-d="'+i+'" data-k="r0" style="'+inp+'">'+opt(e[0]||'')+'</select><select data-d="'+i+'" data-k="r1" style="'+inp+'">'+opt(e[1]||'')+'</select><input data-d="'+i+'" data-k="tarefa" placeholder="Tarefa" style="'+inp+';flex:1;min-width:90px" value="'+escapeHTML((sc[i]||{}).tarefa||'')+'"></div>';});
+    h+='<button type="button" class="inq-filter-btn" id="lpSave" style="margin:6px 0">Guardar escala</button><h4 style="margin:12px 0 4px">Esta semana</h4>';
+    const t=new Date();t.setHours(0,0,0,0);const mon=new Date(t);mon.setDate(t.getDate()-((t.getDay()+6)%7));
+    for(let i=0;i<7;i++){const d=new Date(mon);d.setDate(mon.getDate()+i);const ds=isoD(d),past=d<=t;escRooms(sc[i]).forEach(r=>{const rg=L.registo[ds+'|'+house+'|'+r];h+='<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0"><span>'+DIAS[i]+' '+fdate(ds).slice(0,5)+' · Quarto '+escapeHTML(r)+' · '+escapeHTML(nm(r))+'</span><span>'+(rg?(rg.feito?'✅ feito por '+escapeHTML((rg.nome||nm(r)).split(' ')[0]):'❌ disse que não fez'):(past?'⏳ sem confirmação':'—'))+'</span></div>';});}
+    h+='<h4 style="margin:12px 0 4px">Cumprimento (últimos 3 meses)</h4>';const days=limpezaDays(house,92);
+    rooms.forEach(r=>{const mine=days.filter(x=>x.room===String(r.id));if(!mine.length)return;const f=mine.filter(x=>x.feito===true).length,pc=Math.round(f/mine.length*100);h+='<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0"><span>Quarto '+escapeHTML(String(r.id))+' · '+escapeHTML(nm(r.id))+'</span><b style="color:'+(pc>=80?'#2e9e6b':pc>=50?'#d99a1c':'#d24a4a')+'">'+f+'/'+mine.length+' · '+pc+'%</b></div>';});
+    const hist=regList(house);h+='<h4 style="margin:12px 0 4px">Histórico com datas ('+hist.length+')</h4><div style="max-height:200px;overflow:auto">'+(hist.length?hist.map((x,i)=>'<div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:3px 0;border-bottom:1px solid rgba(128,128,128,.2)"><span>'+fdate(x.ds)+' '+DIAS[wdOf(x.ds)]+' · Quarto '+escapeHTML(x.r)+' · '+escapeHTML((x.nome||nm(x.r)).split(' ')[0])+' · '+(x.feito?'✅':'❌')+'</span><button type="button" class="inq-filter-btn" data-del="'+i+'">Apagar</button></div>').join(''):'<small>Ainda sem registos.</small>')+'</div>'+
+      '<h4 style="margin:12px 0 4px">Limpar registos</h4><div style="font-size:12px">Apagar anteriores a <input type="date" id="lpBefore" style="'+inp+'"> <button type="button" class="inq-filter-btn" id="lpClearB">Apagar</button><br><button type="button" class="inq-filter-btn" id="lpClearAll" style="margin-top:6px">Apagar todos os registos da casa '+house+'</button></div>';
+    body.innerHTML=h;
+    body.querySelector('#lpSave').onclick=async()=>{for(let i=0;i<7;i++){const v=k=>body.querySelector('[data-d="'+i+'"][data-k="'+k+'"]').value;sc[i]={rooms:[...new Set([v('r0'),v('r1')].filter(Boolean))],tarefa:v('tarefa')};}await saveState();publishPortal(true);showSaveToast(true,'Escala guardada');draw();};
+    body.querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{const x=hist[Number(b.dataset.del)];delete L.registo[x.k];await saveState();publishPortal(true);draw();});
+    body.querySelector('#lpClearB').onclick=async()=>{const d=body.querySelector('#lpBefore').value;if(!d)return;const ks=hist.filter(x=>x.ds<d);if(ks.length&&await customConfirm('Apagar '+ks.length+' registo(s) anteriores a '+fdate(d)+'?','Apagar')){ks.forEach(x=>delete L.registo[x.k]);await saveState();publishPortal(true);draw();}};
+    body.querySelector('#lpClearAll').onclick=async()=>{if(hist.length&&await customConfirm('Apagar TODOS os '+hist.length+' registos da casa '+house+'? Só se desfaz pelo menu Alterações.','Apagar tudo')){hist.forEach(x=>delete L.registo[x.k]);await saveState();publishPortal(true);draw();}};};
+  draw();
+}
+function injectTenantExtras(rid){
+  const anchor=document.getElementById('tmAddRentChangeBtn');if(!anchor)return;const old=document.getElementById('tmLimpezaBox');if(old)old.remove();
+  const room=state.rooms.find(r=>String(r.id)===String(rid))||{},h=room.house,L=LP(),e=DIAS.map((dn,i)=>escRooms((L.escala[h]||{})[i]).includes(String(rid))?dn:'').filter(Boolean);
+  const hist=regList(h).filter(x=>x.r===String(rid)).slice(0,40),res=(state.reservas||[]).filter(r=>String(r.rid)===String(rid)).sort((a,b)=>(b.data||b.at||'').localeCompare(a.data||a.at||'')).slice(0,20);
+  const box=document.createElement('div');box.id='tmLimpezaBox';box.style.cssText='border-top:1px solid rgba(128,128,128,.3);margin-top:12px;padding-top:8px;font-size:13px';
+  box.innerHTML='<b>🧹 Limpeza</b><br>Dias atribuídos: <b>'+(e.length?e.join(', '):'nenhum')+'</b><div style="max-height:130px;overflow:auto;margin:4px 0">'+(hist.length?hist.map(x=>'<div>'+fdate(x.ds)+' '+DIAS[wdOf(x.ds)]+' · '+(x.feito?'✅ feito':'❌ não feito')+'</div>').join(''):'<small>Sem registos.</small>')+'</div><b>📅 Pedidos e reservas</b><div style="max-height:130px;overflow:auto;margin:4px 0">'+(res.length?res.map(r=>'<div>'+escapeHTML(r.tipo)+' · '+(r.data?fdate(r.data):'sem data')+' · <i>'+escapeHTML(r.estado)+'</i></div>').join(''):'<small>Sem pedidos.</small>')+'</div>';
+  anchor.parentElement.parentElement.insertBefore(box,anchor.parentElement);
+}
+{const _otm=openTenantModal;openTenantModal=function(rid){const r=_otm.apply(this,arguments);try{injectTenantExtras(rid);}catch(e){console.warn('ficha extras',e);}return r;};}
+async function openReservas(){
+  try{await syncTenantInputs();}catch(e){}
+  state.reservas=state.reservas||[];let view='lista';const ov=overlayCard('Pedidos e reservas','<div id="rsTop"></div><div id="rsBody"></div>'),top=ov.querySelector('#rsTop'),body=ov.querySelector('#rsBody'),inp='padding:6px;margin:3px 0;border-radius:6px;border:1px solid #2a3550;background:#0a0e17;color:#fff;font-size:12px;width:100%;box-sizing:border-box';
+  const btn=(t,f)=>{const b=document.createElement('button');b.type='button';b.className='inq-filter-btn';b.style.cssText='margin:0 6px 6px 0';b.textContent=t;b.onclick=f;return b;};
+  const draw=()=>{top.innerHTML='';top.appendChild(btn('Pedidos e reservas',()=>{view='lista';draw();}));top.appendChild(btn('+ Nova',()=>{view='nova';draw();}));top.appendChild(btn('⚙ Gerir lista',()=>{view='cat';draw();}));top.appendChild(btn('Limpar nuvem',async()=>{const F=window.__fb;if(!F||!F.uid){await customAlert('Entra primeiro na nuvem.');return;}if(!await customConfirm('Apagar da nuvem os pedidos dos inquilinos já importados? O histórico na app mantém-se.','Limpar'))return;const sn=await F.db.collection('pedidos').orderBy('at','desc').limit(300).get();let n=0;const ids=[];sn.forEach(d=>{if((d.data()||{}).estado==='importado')ids.push(d.id);});for(const id of ids){try{await F.db.collection('pedidos').doc(id).delete();n++;}catch(e){}}showSaveToast(true,n+' pedido(s) apagado(s) da nuvem');}));
+    if(view==='lista'){body.innerHTML=state.reservas.length?'':'<small>Sem pedidos. O histórico fica guardado aqui.</small>';state.reservas.slice().sort((a,b)=>(b.data||b.at||'').localeCompare(a.data||a.at||'')).forEach(r=>{const d=document.createElement('div');d.style.cssText='padding:6px 0;border-bottom:1px solid rgba(128,128,128,.25);font-size:12px';const t=state.tenants[r.rid]||{};d.innerHTML='<b>'+escapeHTML(r.tipo)+'</b> · '+escapeHTML(r.data?r.data.split('-').reverse().join('/'):'sem data')+' · casa '+escapeHTML(r.house||'')+'<br>Quarto '+escapeHTML(String(r.rid))+' · '+escapeHTML(t.nome||'')+(r.nota?' · <i>'+escapeHTML(r.nota)+'</i>':'')+'<br>';
+      const sel=document.createElement('select');['pendente','aprovada','recusada','cancelada'].forEach(e=>{const o=document.createElement('option');o.textContent=e;if(r.estado===e)o.selected=true;sel.appendChild(o);});
+      sel.onchange=async()=>{if(sel.value==='aprovada'&&r.data){const c=state.reservas.find(x=>x.id!==r.id&&x.estado==='aprovada'&&x.house===r.house&&x.tipo===r.tipo&&x.data===r.data);if(c&&!await customConfirm('Já existe uma reserva aprovada de '+r.tipo+' nesse dia (quarto '+c.rid+'). Aprovar mesmo assim?','Conflito')){sel.value=r.estado;return;}}r.estado=sel.value;r.decididoEm=new Date().toISOString();await saveState();publishPortal(true);};d.appendChild(sel);const dl=document.createElement('button');dl.type='button';dl.className='inq-filter-btn';dl.style.marginLeft='6px';dl.textContent='Apagar';dl.onclick=async()=>{if(await customConfirm('Apagar este registo do histórico?','Apagar')){state.reservas=state.reservas.filter(x=>x.id!==r.id);await saveState();publishPortal(true);draw();}};d.appendChild(dl);body.appendChild(d);});}
+    else if(view==='nova'){const cat=CATALOGO().filter(c=>c.ativo),rooms=state.rooms.filter(r=>state.tenants[r.id]&&currentAutoStatus(r.id)!=='vago');
+      body.innerHTML='<label style="font-size:12px">Inquilino</label><select id="nvR" style="'+inp+'">'+rooms.map(r=>'<option value="'+escapeHTML(String(r.id))+'">Quarto '+escapeHTML(String(r.id))+' · '+escapeHTML((state.tenants[r.id].nome||''))+' ('+escapeHTML(r.house||'')+')</option>').join('')+'</select><label style="font-size:12px">O quê</label><select id="nvT" style="'+inp+'">'+cat.map(c=>'<option>'+escapeHTML(c.nome)+'</option>').join('')+'</select><label style="font-size:12px">Data</label><input id="nvD" type="date" style="'+inp+'" value="'+todayISO()+'"><input id="nvN" placeholder="Nota (opcional)" style="'+inp+'" maxlength="120">';
+      body.appendChild(btn('Adicionar (aprovada)',async()=>{const rid=body.querySelector('#nvR').value,room=state.rooms.find(r=>String(r.id)===rid);state.reservas.push({id:featureId('rs'),rid,house:room&&room.house,tipo:body.querySelector('#nvT').value,data:body.querySelector('#nvD').value,nota:body.querySelector('#nvN').value.trim(),estado:'aprovada',at:new Date().toISOString()});await saveState();publishPortal(true);view='lista';draw();showSaveToast(true,'Adicionado');}));}
+    else{const cat=CATALOGO();body.innerHTML='<p style="font-size:12px;opacity:.75;margin:0 0 6px">Esta lista aparece no portal dos inquilinos. Podes renomear, escolher a casa, pedir data, desativar ou apagar.</p>';
+      cat.forEach((c,i)=>{const d=document.createElement('div');d.style.cssText='border-top:1px solid #2a3550;padding:6px 0';d.innerHTML='<input data-i="'+i+'" data-f="nome" style="'+inp+'" value="'+escapeHTML(c.nome)+'"><select data-i="'+i+'" data-f="tipo" style="'+inp+';width:32%"><option value="reserva" '+(c.tipo==='reserva'?'selected':'')+'>Reserva</option><option value="pedido" '+(c.tipo==='pedido'?'selected':'')+'>Pedido</option></select> <select data-i="'+i+'" data-f="casa" style="'+inp+';width:32%"><option value="ambas" '+(c.casa==='ambas'?'selected':'')+'>Ambas</option><option value="baixo" '+(c.casa==='baixo'?'selected':'')+'>Baixo</option><option value="cima" '+(c.casa==='cima'?'selected':'')+'>Cima</option></select><br><label style="font-size:12px"><input type="checkbox" data-i="'+i+'" data-f="data" '+(c.data?'checked':'')+'> pede data</label> <label style="font-size:12px"><input type="checkbox" data-i="'+i+'" data-f="ativo" '+(c.ativo?'checked':'')+'> ativo</label> <button type="button" class="inq-filter-btn" data-del="'+i+'">Apagar</button>';body.appendChild(d);});
+      body.appendChild(btn('+ Adicionar à lista',()=>{cat.push({id:featureId('c'),nome:'Novo',tipo:'pedido',casa:'ambas',data:true,ativo:true});draw();}));
+      body.appendChild(btn('Guardar lista',async()=>{body.querySelectorAll('[data-f]').forEach(e=>{const c=cat[e.dataset.i];if(!c)return;c[e.dataset.f]=e.type==='checkbox'?e.checked:e.value.trim()||c[e.dataset.f];});state.catalogo=cat.filter(c=>c.nome);await saveState();publishPortal(true);showSaveToast(true,'Lista guardada');draw();}));
+      body.querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{if(await customConfirm('Apagar este item da lista? O histórico mantém-se.','Apagar')){cat.splice(Number(b.dataset.del),1);state.catalogo=cat;await saveState();publishPortal(true);draw();}});}};
+  draw();
+}
 
+/* ===== Ficha do inquilino: limpeza e pedidos ===== */
+function fichaExtras(rid){
+  const ov=document.getElementById('tenantModalOverlay');if(!ov||!ov.firstElementChild)return;const host=ov.firstElementChild;let d=host.querySelector('#fichaExtras');if(!d){d=document.createElement('div');d.id='fichaExtras';d.style.cssText='margin-top:14px;padding-top:10px;border-top:1px solid rgba(128,128,128,.4);font-size:13px';host.appendChild(d);}
+  const room=state.rooms.find(x=>String(x.id)===String(rid))||{},h=room.house,L=LP(),dias=DIAS.filter((_,i)=>escRooms((L.escala[h]||{})[i]).includes(String(rid))),days=limpezaDays(h,92).filter(x=>x.room===String(rid)&&x.data<=todayISO()),f=days.filter(x=>x.feito===true).length,last=days.filter(x=>x.feito!==null).slice(-6).reverse(),rs=(state.reservas||[]).filter(x=>String(x.rid)===String(rid)).sort((a,b)=>(b.at||'').localeCompare(a.at||'')).slice(0,8),fd=s=>s.split('-').reverse().join('/');
+  d.innerHTML='<b>🧹 Limpeza</b><br>Dias: '+(dias.join(', ')||'sem dias atribuídos')+' · últimos 3 meses: <b>'+f+'/'+days.length+'</b><br>'+(last.map(x=>'<small>'+fd(x.data)+' '+(x.feito?'✅':'❌')+'</small>').join(' · ')||'<small>Sem registos</small>')+'<br><br><b>📅 Pedidos e reservas</b>'+(rs.length?rs.map(x=>'<div><small>'+escapeHTML(x.tipo)+' · '+(x.data?fd(x.data):'sem data')+' · '+escapeHTML(x.estado)+'</small></div>').join(''):'<br><small>Sem pedidos.</small>')+'<br><small>Gerir em 🛠 Ferramentas → Limpeza da casa / Pedidos e reservas.</small>';
+}
+{const _otm=openTenantModal;openTenantModal=function(rid){const r=_otm.apply(this,arguments);try{fichaExtras(rid);}catch(e){console.warn('ficha extras',e);}return r;};}
+
+/* P02 — soft reload from cloud without location.reload */
+window.__cloudReload = async function(remote) {
+  try {
+    const raw = remote && (remote.payload || (remote.store ? JSON.stringify(remote.store) : null));
+    if (!raw) throw new Error('payload vazio');
+    const j = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (!isStoreEnvelopeUsable(j)) throw new Error('estrutura inválida');
+    store = j;
+    Object.values(store.properties).forEach(p => { p.data = normalizeState(p.data); });
+    const cur = store.properties[store.currentId];
+    if (!cur) throw new Error('currentId inválido');
+    state = cur.data;
+    try {
+      if (typeof renderPropertySelector === 'function') renderPropertySelector();
+      if (typeof rerenderActiveTab === 'function') rerenderActiveTab();
+    } catch (uiErr) {
+      console.warn('[cloudReload] UI', uiErr);
+      location.reload();
+      return false;
+    }
+    if (typeof showSaveToast === 'function') showSaveToast(true, 'Dados atualizados de outro dispositivo');
+    return true;
+  } catch (e) {
+    console.warn('[cloudReload] fallback reload', e);
+    location.reload();
+    return false;
+  }
+};
+</script>
 <nav class="bottom-nav" id="bottomNav" aria-label="Navegação principal">
   <button type="button" data-tab="hoje" class="active"><span>◎</span>Hoje</button>
   <button type="button" data-tab="painel"><span>▦</span>Painel</button>
@@ -10874,150 +11322,134 @@ function decorateHojeLayout(){
   <button type="button" data-tab="despesas"><span>€</span>Caixa</button>
   <button type="button" data-tab="mais"><span>⋯</span>Mais</button>
 </nav>
-
-<!-- Firebase SDK + nuvem Livro da Casa -->
+<!-- Nuvem (Firebase) — sincronização segura, sem recarregamentos em ciclo -->
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <script>
-(function () {
-  const firebaseConfig = {
-    apiKey: "AIzaSyCwULDIMegxK5qpk7KN3x4jvwbdwN8HSWw",
-    authDomain: "alojamentovalenca-66035.firebaseapp.com",
-    projectId: "alojamentovalenca-66035",
-    storageBucket: "alojamentovalenca-66035.firebasestorage.app",
-    messagingSenderId: "401234375880",
-    appId: "1:401234375880:web:b41eb60bc1c0cd791ee1fd",
-    measurementId: "G-L7BR05SM36"
-  };
-  firebase.initializeApp(firebaseConfig);
-  const auth = firebase.auth();
-  const db = firebase.firestore();
-
-  // Ecrã de login simples
-  const gate = document.createElement('div');
-  gate.id = 'fbAuthGate';
-  gate.style.cssText = 'position:fixed;inset:0;z-index:99999;background:#0a0e17;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;color:#e8eef8;';
-  gate.innerHTML = `
-    <div style="max-width:360px;width:90%;padding:28px;border:1px solid #2a3550;border-radius:12px;background:#121826;">
-      <h2 style="margin:0 0 8px;font-size:1.25rem;">Livro da Casa</h2>
-      <p style="margin:0 0 18px;font-size:13px;opacity:.75;">Inicia sessão para sincronizar os dados na nuvem.</p>
-      <button type="button" id="fbGoogleBtn" style="width:100%;padding:12px;border:none;border-radius:8px;background:#fff;color:#111;font-weight:600;cursor:pointer;margin-bottom:10px;">Entrar com Google</button>
-      <div style="font-size:12px;opacity:.6;text-align:center;margin:10px 0;">ou e-mail</div>
-      <input id="fbEmail" type="email" placeholder="E-mail" style="width:100%;padding:10px;margin-bottom:8px;border-radius:8px;border:1px solid #2a3550;background:#0a0e17;color:#fff;box-sizing:border-box;">
-      <input id="fbPass" type="password" placeholder="Palavra-passe" style="width:100%;padding:10px;margin-bottom:8px;border-radius:8px;border:1px solid #2a3550;background:#0a0e17;color:#fff;box-sizing:border-box;">
-      <button type="button" id="fbEmailBtn" style="width:100%;padding:12px;border:none;border-radius:8px;background:#35D4FF;color:#0a0e17;font-weight:700;cursor:pointer;">Entrar / Registar</button>
-      <p id="fbAuthErr" style="color:#ff6b8a;font-size:12px;margin:10px 0 0;min-height:1.2em;"></p>
-      <button type="button" id="fbSkipBtn" style="width:100%;margin-top:12px;padding:8px;background:transparent;border:1px solid #2a3550;color:#8a94a8;border-radius:8px;cursor:pointer;font-size:12px;">Continuar só neste dispositivo (sem nuvem)</button>
-    </div>`;
-  document.body.appendChild(gate);
-
-  const errEl = () => document.getElementById('fbAuthErr');
-  document.getElementById('fbGoogleBtn').onclick = async () => {
-    try {
-      errEl().textContent = '';
-      await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
-    } catch (e) { errEl().textContent = e.message || String(e); }
-  };
-  document.getElementById('fbEmailBtn').onclick = async () => {
-    const email = document.getElementById('fbEmail').value.trim();
-    const pass = document.getElementById('fbPass').value;
-    if (!email || pass.length < 6) { errEl().textContent = 'E-mail e palavra-passe (mín. 6 caracteres).'; return; }
-    try {
-      errEl().textContent = '';
-      try { await auth.signInWithEmailAndPassword(email, pass); }
-      catch (e) {
-        if (e.code === 'auth/user-not-found' || e.code === 'auth/invalid-credential') {
-          await auth.createUserWithEmailAndPassword(email, pass);
-        } else throw e;
-      }
-    } catch (e) { errEl().textContent = e.message || String(e); }
-  };
-  document.getElementById('fbSkipBtn').onclick = () => { gate.style.display = 'none'; };
-
-  async function cloudDocRef(uid) {
-    return db.collection('users').doc(uid).collection('data').doc('main');
+(function(){
+if(typeof firebase==='undefined'){console.warn('Firebase indisponível — a app funciona só em modo local.');return;}
+firebase.initializeApp({apiKey:"AIzaSyCwULDIMegxK5qpk7KN3x4jvwbdwN8HSWw",authDomain:"alojamentovalenca-66035.firebaseapp.com",projectId:"alojamentovalenca-66035",storageBucket:"alojamentovalenca-66035.firebasestorage.app",messagingSenderId:"401234375880",appId:"1:401234375880:web:b41eb60bc1c0cd791ee1fd"});
+const auth=firebase.auth(),db=firebase.firestore();
+const LS=(k,v)=>v===undefined?localStorage.getItem(k):localStorage.setItem(k,v);
+const dev=LS('fb_device')||(LS('fb_device',Math.random().toString(36).slice(2,8)),LS('fb_device'));
+let uid=null,applying=false,timer=null,unsub=null,asking=false;
+const ref=()=>db.collection('users').doc(uid).collection('data').doc('main');
+const rawOf=d=>d.payload||(d.store?JSON.stringify(d.store):null);
+const ask=(m,t)=>typeof customConfirm==='function'?customConfirm(m,t):Promise.resolve(confirm(m));
+const badge=document.createElement('button');badge.type='button';badge.style.cssText='margin-left:6px;font-size:12px;padding:6px 10px;border-radius:8px;border:0;cursor:pointer;font-weight:600';{const sv=document.getElementById('savePainelBtn');if(sv&&sv.parentNode)sv.parentNode.insertBefore(badge,sv.nextSibling);else{badge.style.cssText+=';position:fixed;bottom:8px;left:8px;z-index:9998';document.body.appendChild(badge);}}
+const COL={ok:['#1f8a5b','#fff'],busy:['#d99a1c','#111'],err:['#d24a4a','#fff'],off:['#3a4256','#cfd6e6']};
+const setBadge=(t,k)=>{k=k||(/^☁ (Sincronizado|Gravado)/.test(t)?'ok':/^⚠/.test(t)?'err':/(guardar|sincronizar)/i.test(t)?'busy':'off');badge.textContent=t;badge.style.background=COL[k][0];badge.style.color=COL[k][1];badge.title='Nuvem: verde = gravado na Firebase · amarelo = a gravar · vermelho = falhou · cinzento = sem sessão. Clica para opções.';};
+const okBadge=()=>{const d=new Date();LS('fb_last_ok',d.toISOString());setBadge('☁ Gravado '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'));};setBadge('☁ …','off');
+const gate=document.createElement('div');gate.style.cssText='display:none;position:fixed;inset:0;z-index:99999;background:#0a0e17;align-items:center;justify-content:center;font-family:system-ui,sans-serif;color:#e8ecf5';
+const inp='width:100%;box-sizing:border-box;padding:10px;margin-bottom:8px;border-radius:8px;border:1px solid #2a3550;background:#0a0e17;color:#fff',bt='width:100%;padding:11px;border:0;border-radius:8px;font-weight:700;cursor:pointer;margin-top:8px';
+gate.innerHTML='<div style="max-width:360px;width:90%;padding:28px;border:1px solid #2a3550;border-radius:12px;background:#121826"><h2 style="margin:0 0 8px;font-size:1.2rem">Livro da Casa</h2><p style="margin:0 0 16px;font-size:13px;opacity:.75">Inicia sessão para sincronizar na nuvem.</p><button type="button" id="fbG" style="'+bt+';background:#fff;color:#111;margin-top:0">Entrar com Google</button><input id="fbE" type="email" placeholder="E-mail" style="'+inp+';margin-top:10px"><input id="fbP" type="password" placeholder="Palavra-passe (mín. 6)" style="'+inp+'"><button type="button" id="fbL" style="'+bt+';background:#35D4FF;color:#0a0e17">Entrar</button><button type="button" id="fbC" style="'+bt+';background:transparent;border:1px solid #2a3550;color:#8a94a8;font-weight:500">Criar conta nova</button><p id="fbErr" style="color:#ff6b8a;font-size:12px;margin:10px 0 0;min-height:1.2em"></p><button type="button" id="fbS" style="'+bt+';background:transparent;border:1px solid #2a3550;color:#8a94a8;font-weight:500">Continuar sem nuvem</button></div>';
+document.body.appendChild(gate);
+const $=id=>gate.querySelector('#'+id);
+const err=e=>{
+  const c=(e&&e.code)||'';
+  const msg=String((e&&e.message)||e||'');
+  if(c==='auth/unauthorized-domain'){$('fbErr').textContent='Domínio não autorizado: adiciona este endereço em Authentication → Settings → Authorized domains.';return;}
+  if(c==='auth/operation-not-supported-in-this-environment'||location.protocol==='file:'){$('fbErr').textContent='Abre a app por endereço https (GitHub Pages / Firebase Hosting), não como ficheiro local.';return;}
+  if(c==='auth/invalid-credential'||c==='auth/wrong-password'||c==='auth/user-not-found'){$('fbErr').textContent='E-mail ou palavra-passe incorretos.';return;}
+  if(c==='auth/popup-closed-by-user'||c==='auth/cancelled-popup-request'){$('fbErr').textContent='Login cancelado. Tenta de novo.';return;}
+  if(c==='auth/popup-blocked'){$('fbErr').textContent='O browser bloqueou a janela. Permite pop-ups ou usa e-mail/palavra-passe.';return;}
+  /* sessionStorage / redirect state lost — comum no telemóvel, modo privado, Safari */
+  if(/missing initial state|sessionStorage|storage-partitioned|third-party cookie/i.test(msg)||c==='auth/missing-initial-state'){
+    $('fbErr').textContent='O browser perdeu o estado do login (comum no telemóvel). Soluções: 1) Usa e-mail e palavra-passe abaixo. 2) Abre em Chrome/Safari normal (não privado). 3) Fecha separadores desta app e tenta de novo.';
+    return;
   }
-
-  async function pullFromCloud(uid) {
-    try {
-      const snap = await (await cloudDocRef(uid)).get();
-      if (!snap.exists) return null;
-      return snap.data();
-    } catch (e) {
-      console.warn('Firestore pull', e);
-      return null;
-    }
+  $('fbErr').textContent=msg||String(e);
+};
+/* Completar login Google se veio de redirect (telemóvel) */
+auth.getRedirectResult().then(res=>{
+  if(res&&res.user){/* onAuthStateChanged trata a sessão */}
+}).catch(e=>{
+  const msg=String((e&&e.message)||'');
+  if(/missing initial state/i.test(msg)){
+    try{sessionStorage.clear();}catch(_){}
+    console.warn('Firebase redirect state em falta — usa e-mail/palavra-passe ou tenta de novo.',e);
   }
-
-  async function pushToCloud(uid) {
-    try {
-      if (typeof store === 'undefined' || !store) return;
-      await (await cloudDocRef(uid)).set({
-        store: JSON.parse(JSON.stringify(store)),
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-      }, { merge: true });
-      console.log('[nuvem] dados gravados');
-    } catch (e) {
-      console.warn('Firestore push', e);
-      alert('Não foi possível gravar na nuvem: ' + (e.message || e));
-    }
-  }
-
-  window.__fbPushCloud = async function () {
-    const u = auth.currentUser;
-    if (u) await pushToCloud(u.uid);
-  };
-
-  auth.onAuthStateChanged(async (user) => {
-    if (!user) {
-      gate.style.display = 'flex';
+});
+function isMobileAuth(){
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent||'')||(window.matchMedia&&window.matchMedia('(max-width:900px)').matches);
+}
+$('fbG').onclick=async()=>{
+  try{
+    $('fbErr').textContent='';
+    const provider=new firebase.auth.GoogleAuthProvider();
+    provider.setCustomParameters({prompt:'select_account'});
+    /* No telemóvel o popup falha muitas vezes → redirect; no desktop tenta popup e cai para redirect se necessário */
+    if(isMobileAuth()){
+      await auth.signInWithRedirect(provider);
       return;
     }
-    gate.style.display = 'none';
-    // Carregar da nuvem se existir
-    const remote = await pullFromCloud(user.uid);
-    if (remote && remote.store) {
-      try {
-        if (typeof store !== 'undefined') {
-          // Substitui o store local pelo da nuvem
-          Object.keys(store).forEach(k => delete store[k]);
-          Object.assign(store, remote.store);
-          if (typeof state !== 'undefined' && store.properties && store.currentId) {
-            state = store.properties[store.currentId].data;
-          }
-          if (typeof saveState === 'function') await saveState();
-          if (typeof renderHojeTab === 'function') renderHojeTab();
-          if (typeof renderPropertySelector === 'function') renderPropertySelector();
-          location.reload(); // garante UI actualizada
-          return;
-        }
-      } catch (e) { console.warn('apply cloud', e); }
-    } else {
-      // Primeira vez: envia o que está no browser para a nuvem
-      await pushToCloud(user.uid);
+    try{
+      await auth.signInWithPopup(provider);
+    }catch(popErr){
+      const c=(popErr&&popErr.code)||'';
+      if(c==='auth/popup-blocked'||c==='auth/operation-not-supported-in-this-environment'||/missing initial state|storage/i.test(String(popErr&&popErr.message||''))){
+        $('fbErr').textContent='A redirecionar para o Google…';
+        await auth.signInWithRedirect(provider);
+        return;
+      }
+      throw popErr;
     }
-  });
-
-  // Depois de cada gravação local, tenta nuvem
-  const _hook = setInterval(() => {
-    if (typeof saveState !== 'function') return;
-    clearInterval(_hook);
-    const orig = saveState;
-    saveState = async function (...args) {
-      const r = await orig.apply(this, args);
-      try { await window.__fbPushCloud(); } catch (e) {}
-      return r;
-    };
-  }, 500);
-
-  // Botão sair (canto)
-  const out = document.createElement('button');
-  out.textContent = 'Sair da conta';
-  out.title = 'Terminar sessão Firebase';
-  out.style.cssText = 'position:fixed;bottom:8px;left:8px;z-index:99998;font-size:11px;padding:6px 10px;border-radius:6px;border:1px solid #2a3550;background:#121826;color:#8a94a8;cursor:pointer;';
-  out.onclick = () => auth.signOut();
-  document.body.appendChild(out);
+  }catch(e){err(e);}
+};
+$('fbL').onclick=async()=>{try{$('fbErr').textContent='';await auth.signInWithEmailAndPassword($('fbE').value.trim(),$('fbP').value);}catch(e){err(e);}};
+$('fbC').onclick=async()=>{try{$('fbErr').textContent='';if($('fbP').value.length<6){$('fbErr').textContent='Palavra-passe: mínimo 6 caracteres.';return;}await auth.createUserWithEmailAndPassword($('fbE').value.trim(),$('fbP').value);}catch(e){err(e);}};
+$('fbS').onclick=()=>{LS('fb_skip','1');gate.style.display='none';};
+async function dailyBackup(raw,rev){try{if(!uid||!raw)return;const day=new Date().toISOString().slice(0,10);if(LS('fb_bk_'+uid)===day)return;const col=db.collection('users').doc(uid).collection('backups');await col.doc(day).set({payload:raw,rev:rev||'',at:new Date().toISOString(),device:dev});LS('fb_bk_'+uid,day);const all=await col.get(),ids=[];all.forEach(d=>ids.push(d.id));ids.sort();while(ids.length>30){await col.doc(ids.shift()).delete();}}catch(e){console.warn('backup nuvem',e);}}
+async function restoreCloudBackup(){const col=db.collection('users').doc(uid).collection('backups'),all=await col.get(),ids=[];all.forEach(d=>ids.push(d.id));ids.sort();if(!ids.length){await customAlert('Ainda não há cópias diárias na nuvem.');return;}
+  const v=await customPromptDialog('Cópias na nuvem:\n'+ids.slice(-15).join(', ')+'\nData a restaurar (AAAA-MM-DD):',ids[ids.length-1],'Restaurar da nuvem');if(!v)return;const sn=await col.doc(String(v).trim()).get();if(!sn.exists){await customAlert('Cópia não encontrada.');return;}
+  if(!await ask('Substituir TODOS os dados (neste e nos outros dispositivos) pela cópia de '+v+'? É guardada antes uma cópia local.','Restaurar'))return;
+  const d=sn.data(),rev=Date.now()+'-'+dev;await ref().set({payload:d.payload,rev,updatedAt:new Date().toISOString(),device:dev});await applyRemote({payload:d.payload,rev});}
+async function verifyCloud(){const sn=await ref().get();if(!sn.exists){await customAlert('Ainda não há dados na nuvem.');return;}const d=sn.data(),same=LS('fb_seen_'+uid)===(d.rev||'legacy');
+  await customAlert('✓ A nuvem (Firebase) tem dados.\nÚltima gravação: '+(d.updatedAt?new Date(d.updatedAt).toLocaleString('pt-PT'):'—')+'\nDispositivo que gravou: '+(d.device||'?')+'\nEste dispositivo está '+(same?'IGUAL à nuvem':'DIFERENTE da nuvem')+'\nTamanho: '+Math.round((rawOf(d)||'').length/1024)+' KB','Verificar nuvem');}
+function overdueCount(){const cur=currentRealMonthIndex();let n=0;MONTH_KEYS.forEach((mk,k)=>{if(k>cur)return;state.rooms.forEach(r=>{if(isRentedThisMonth(mk,r.id,k)&&effectiveStatusRenda(mk,r.id)==='Não Pago')n++;});});return n;}
+function checkOverdueNotify(){try{if(!('Notification' in window)||Notification.permission!=='granted')return;const day=new Date().toISOString().slice(0,10);if(LS('fb_notif_day')===day)return;const n=overdueCount();if(n>0)new Notification('Livro da Casa',{body:n+' renda(s) em atraso'});LS('fb_notif_day',day);}catch(e){}}
+setInterval(checkOverdueNotify,3600000);
+badge.onclick=async()=>{if(!uid){LS('fb_skip','');gate.style.display='flex';return;}
+  const v=await customPromptDialog('1 = Verificar gravação na nuvem\n2 = Restaurar cópia diária da nuvem\n3 = Ativar avisos de rendas em atraso\n4 = Terminar sessão','1','Nuvem');
+  try{if(v==='1')await verifyCloud();else if(v==='2')await restoreCloudBackup();else if(v==='3'){if(!('Notification' in window))await customAlert('Este navegador não suporta notificações.');else if(await Notification.requestPermission()==='granted'){LS('fb_notif_day','');checkOverdueNotify();await customAlert('Avisos ativados: recebes um aviso por dia, com a app aberta, se houver rendas em atraso.');}}else if(v==='4'&&await ask('Terminar sessão na nuvem? Os dados ficam neste dispositivo.','Sair'))auth.signOut();}catch(e){await customAlert('Erro: '+(e.message||e));}};
+async function applyRemote(d){const raw=rawOf(d);try{const j=JSON.parse(raw);if(!j||!j.properties)throw 0;}catch(e){alert('Dados da nuvem inválidos — nada foi alterado.');return false;}
+  applying=true;
+  try{
+    try{await autoSnapshot();}catch(e){}
+    await idbSet(IDB_KEY_MAIN,raw);
+    try{localStorage.setItem(STORE_KEY,raw);}catch(e){}
+    LS('fb_seen_'+uid,d.rev||'legacy');LS('fb_dirty_'+uid,'0');
+    if(typeof window.__cloudReload==='function'){
+      await window.__cloudReload({payload:raw,rev:d.rev});
+    }else{
+      location.reload();
+    }
+    return true;
+  }finally{
+    applying=false;
+  }
+}
+async function push(){if(!uid||applying)return;const raw=snapNow();if(!raw)return;if(raw.length>900000){setBadge('⚠ Dados grandes demais');return;}
+  const rev=Date.now()+'-'+dev,prev=LS('fb_seen_'+uid)||'';LS('fb_seen_'+uid,rev);
+  try{await ref().set({payload:raw,rev,updatedAt:new Date().toISOString(),device:dev});LS('fb_dirty_'+uid,'0');okBadge();dailyBackup(raw,rev);}catch(e){LS('fb_seen_'+uid,prev);setBadge('⚠ Sem ligação');console.warn('push',e);}}
+function schedulePush(){if(!uid)return;LS('fb_dirty_'+uid,'1');setBadge('☁ A guardar…');clearTimeout(timer);timer=setTimeout(push,2000);}
+async function reconcile(){const snap=await ref().get(),seen=LS('fb_seen_'+uid),dirty=LS('fb_dirty_'+uid)==='1';
+  if(!snap.exists){await push();return 'pushed-first';}
+  const d=snap.data(),rev=d.rev||'legacy';
+  if(rev===seen){if(dirty){await push();return 'pushed-dirty';}return 'in-sync';}
+  if(seen&&!dirty){await applyRemote(d);return 'applied';}
+  const cloud=await ask('Há dados na nuvem'+(seen?' mais recentes E alterações locais por enviar':' e também dados neste dispositivo')+'.\nOK = usar os da NUVEM (guarda cópia local antes).\nCancelar = manter ESTE dispositivo e enviar para a nuvem.','Sincronização');
+  if(cloud){await applyRemote(d);return 'applied-choice';}await push();return 'pushed-choice';}
+function listen(){if(unsub)unsub();unsub=ref().onSnapshot(s=>{if(!s.exists||(s.metadata&&s.metadata.hasPendingWrites)||applying||asking)return;const d=s.data();if((d.rev||'legacy')===LS('fb_seen_'+uid)||LS('fb_dirty_'+uid)==='1')return;
+  asking=true;ask('Há dados novos de outro dispositivo. Aplicar agora?','Sincronização').then(async ok=>{asking=false;if(ok)await applyRemote(d);});},e=>console.warn('listen',e));}
+auth.onAuthStateChanged(async u=>{
+  if(!u){uid=null;if(unsub){unsub();unsub=null;}setBadge('☁ Entrar');if(!LS('fb_skip'))gate.style.display='flex';return;}
+  uid=u.uid;gate.style.display='none';setBadge('☁ A sincronizar…');
+  try{const r=await reconcile();window.__cloudLast=r;if(!applying){okBadge();listen();if(typeof syncTenantInputs==='function')syncTenantInputs().catch(()=>{});if(typeof publishPortal==='function')publishPortal(true);dailyBackup(snapNow(),LS('fb_seen_'+uid));checkOverdueNotify();}}catch(e){setBadge('⚠ Sem ligação');console.warn('reconcile',e);}});
+window.__fb={get db(){return db;},get uid(){return uid;}};
+document.addEventListener('visibilitychange',()=>{if(document.hidden&&timer){clearTimeout(timer);timer=null;push();}});
+const _s=saveState;saveState=async function(...a){const r=await _s.apply(this,a);if(r!==false)schedulePush();return r;};
 })();
 </script>
 </body>
