@@ -3516,6 +3516,17 @@ async function idbSet(key, value) {
     tx.onerror = () => reject(tx.error);
   });
 }
+async function idbDelete(key) {
+  try {
+    const db = await idbOpen();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).delete(key);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) { return false; }
+}
 function slimStoreForAutoBackup(s) {
   try {
     const copy = JSON.parse(JSON.stringify(s));
@@ -6698,7 +6709,7 @@ document.getElementById('addExpBtn').onclick = async () => {
    showSaveToast(true, 'Despesa actualizada');
    // Reabrir grupo e destacar linha editada
    try {
-     const row = document.querySelector('[data-action="edit-exp"][data-id="' + CSS.escape(keepId) + '"]');
+     const row = document.querySelector('[data-action="edit-exp"][data-id="' + cssEscape(keepId) + '"]');
      if (row) {
        const detail = row.closest('.exp-detail-group');
        if (detail) detail.style.display = '';
@@ -7447,7 +7458,12 @@ function getReportState(propertyId,year) {
   const p=store.properties[propertyId]; if(!p) return null;
   if(propertyId===store.currentId && Number(state.managementYear)===Number(year)) return state;
   const base=p.data||{}; const f=(base.yearlyFinancials||{})[year]||{};
-  return {...base, managementYear:Number(year), expenses:f.expenses||[], overrides:f.overrides||{}, despesasOverrides:f.despesasOverrides||{}, roomExpenseAlloc:f.roomExpenseAlloc||{}, rentedOverrides:f.rentedOverrides||{}, monthlyRents:f.monthlyRents||{}, transactions:base.transactions||[]};
+  /* P09 — filtrar transações pelo ano do relatório */
+  const txsYear=(base.transactions||[]).filter(t=>{
+    const y=Number(t.statusMeta&&t.statusMeta.year)||Number(String(t.date||'').slice(0,4));
+    return y===Number(year);
+  });
+  return {...base, managementYear:Number(year), expenses:f.expenses||[], overrides:f.overrides||{}, despesasOverrides:f.despesasOverrides||{}, roomExpenseAlloc:f.roomExpenseAlloc||{}, rentedOverrides:f.rentedOverrides||{}, monthlyRents:f.monthlyRents||{}, transactions:txsYear};
 }
 /** Contrato activo (ocupado/caução) no mês/ano — ignora overrides fantasma após o fim. */
 function roomUnderContractInMonth(tenants, roomId, year, monthIdx) {
@@ -7522,11 +7538,33 @@ function parseCsvGrid(text){
 function bankHeader(v){return String(v||'').trim().toLocaleLowerCase('pt-PT').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,' ').trim();}
 function bankAmount(v){let s=String(v||'').trim().replace(/[€\s]/g,'');let neg=/^\(.*\)$/.test(s);s=s.replace(/[()]/g,'');if(s.includes(',')&&s.includes('.'))s=s.lastIndexOf(',')>s.lastIndexOf('.')?s.replace(/\./g,'').replace(',','.'):s.replace(/,/g,'');else if(s.includes(','))s=s.replace(',','.');const n=Number(s);return Number.isFinite(n)?(neg?-Math.abs(n):n):NaN;}
 function bankDate(v){const s=String(v||'').trim().split(/\s+/)[0];let y,m,d;if(/^\d{4}-\d{2}-\d{2}/.test(s)){[,y,m,d]=s.match(/^(\d{4})-(\d{2})-(\d{2})/);y=Number(y);m=Number(m);d=Number(d);}else{const parts=s.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})$/);if(!parts)return '';d=Number(parts[1]);m=Number(parts[2]);y=Number(parts[3]);if(y<100)y+=y<50?2000:1900;}const dt=new Date(y,m-1,d);if(dt.getFullYear()!==y||dt.getMonth()!==m-1||dt.getDate()!==d)return '';return `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;}
+/* P12 — parser CSV mais robusto: fallback de delimitador + feedback das colunas detetadas */
 function parseBankStatement(text){
- const parsed=parseCsvGrid(String(text||'').replace(/^\uFEFF/,'')),grid=parsed.rows;if(grid.length<2)throw new Error('O CSV tem de incluir cabeçalho e pelo menos uma linha.');
+ let raw=String(text||'').replace(/^\uFEFF/,'');
+ let parsed=parseCsvGrid(raw),grid=parsed.rows;
+ /* Se o resultado tiver poucas colunas, tenta \t e vírgula explicitamente */
+ if(!grid.length || (grid[0]&&grid[0].length<3)){
+   for(const alt of ['\t',',',';']){
+     const forced=raw.split(/\r?\n/).map(line=>{
+       const cells=[];let cell='',q=false;
+       for(let i=0;i<line.length;i++){
+         const c=line[i];
+         if(c==='"'){if(q&&line[i+1]==='"'){cell+='"';i++;}else q=!q;}
+         else if(c===alt&&!q){cells.push(cell);cell='';}
+         else cell+=c;
+       }
+       cells.push(cell);return cells;
+     }).filter(r=>r.some(v=>String(v).trim()));
+     if(forced.length>=2&&forced[0].length>=3){grid=forced;parsed={rows:forced,delimiter:alt};break;}
+   }
+ }
+ if(grid.length<2)throw new Error('O CSV tem de incluir cabeçalho e pelo menos uma linha.');
  const headers=grid[0].map(bankHeader),find=names=>headers.findIndex(h=>names.some(n=>h===n||h.includes(n)));
- const dateCol=find(['data movimento','data operacao','data','date','booking date']),descCol=find(['descricao','descritivo','description','detalhe','movimento','operacao','concept','referencia']),amountCol=find(['montante','valor','amount','quantia']),debitCol=find(['debito','debit']),creditCol=find(['credito','credit']),kindCol=find(['tipo','type']);
- if(dateCol<0||descCol<0||(amountCol<0&&debitCol<0&&creditCol<0))throw new Error('Não reconheci as colunas. O CSV precisa de data, descrição e valor (ou débito/crédito).');
+ const dateCol=find(['data movimento','data operacao','data valor','data','date','booking date','value date']),descCol=find(['descricao','descritivo','description','detalhe','movimento','operacao','concept','referencia','narrativa']),amountCol=find(['montante','valor','amount','quantia','importe']),debitCol=find(['debito','debit','saida']),creditCol=find(['credito','credit','entrada']),kindCol=find(['tipo','type','natureza']);
+ if(dateCol<0||descCol<0||(amountCol<0&&debitCol<0&&creditCol<0)){
+   const detected=(grid[0]||[]).map(h=>String(h||'').trim()).filter(Boolean).slice(0,12).join(', ')||'(nenhuma)';
+   throw new Error('Não reconheci as colunas. Detetei: ['+detected+']\nO CSV precisa de colunas com nomes como: data, descrição, valor (ou débito/crédito separados).');
+ }
  const out=[],occurrences=new Map();for(let i=1;i<grid.length;i++){const cells=grid[i],date=bankDate(cells[dateCol]),description=String(cells[descCol]||'').trim();let amount;if(amountCol>=0)amount=bankAmount(cells[amountCol]);else{const credit=creditCol>=0?bankAmount(cells[creditCol]):0,debit=debitCol>=0?bankAmount(cells[debitCol]):0;amount=(Number.isFinite(credit)?Math.abs(credit):0)-(Number.isFinite(debit)?Math.abs(debit):0);}if(!date||!description||!Number.isFinite(amount)||amount===0)continue;
    if(kindCol>=0){const kind=bankHeader(cells[kindCol]);if(/deb|saida|pagamento/.test(kind))amount=-Math.abs(amount);else if(/cred|entrada|receb/.test(kind))amount=Math.abs(amount);}
    const type=amount<0?'expense':'income',value=Math.round(Math.abs(amount)*100)/100,base=`${date}|${type}|${value.toFixed(2)}|${description.toLocaleLowerCase()}`,occ=(occurrences.get(base)||0)+1;occurrences.set(base,occ);out.push({lineKey:`${base}|${occ}`,date,description,amount:value,type,importedAt:localDateString(),transactionId:''});
@@ -8155,6 +8193,11 @@ function escapeHTML(str) {
    .replace(/"/g, "&quot;")
    .replace(/'/g, "&#039;")
    .replace(/`/g, "&#96;");
+}
+/* P11 — fallback para browsers sem CSS.escape */
+function cssEscape(s) {
+  if (window.CSS && typeof CSS.escape === 'function') return CSS.escape(s);
+  return String(s).replace(/([^\w-])/g, '\\$1');
 }
 
 function fmtDateLong(d) {
@@ -9427,7 +9470,7 @@ function goToRoomFromHoje(rid) {
   setTimeout(() => {
     openTenantModal(ridStr);
     try {
-      const row = document.querySelector('#roomsContainer [data-room="' + CSS.escape(ridStr) + '"]');
+      const row = document.querySelector('#roomsContainer [data-room="' + cssEscape(ridStr) + '"]');
       if (row) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
     } catch (e) {}
   }, 80);
@@ -10544,14 +10587,26 @@ async function autoSnapshot(){
   try{store.properties[store.currentId].data=state;const d=todayISO(),idx=(await idbGet('livroDaCasa_auto_index'))||[];
     if(!idx.includes(d)){await idbSet('livroDaCasa_auto_'+d,JSON.stringify(store));idx.push(d);}
     else await idbSet('livroDaCasa_auto_'+d,JSON.stringify(store));
-    idx.sort();while(idx.length>3){const o=idx.shift();await idbSet('livroDaCasa_auto_'+o,'');}
+    idx.sort();while(idx.length>3){const o=idx.shift();await idbDelete('livroDaCasa_auto_'+o);}
     await idbSet('livroDaCasa_auto_index',idx);}catch(e){console.warn('autoSnapshot',e);}
 }
+/* P06 — só listar cópias automáticas com conteúdo válido */
 async function restoreAutoSnapshot(){
-  const idx=(await idbGet('livroDaCasa_auto_index'))||[];if(!idx.length){await customAlert('Ainda não existem cópias automáticas.');return;}
-  const d=await customPromptDialog('Cópias disponíveis: '+idx.join(', ')+'\nData a restaurar (AAAA-MM-DD):',idx[idx.length-1],'Restaurar cópia automática');if(d===null)return;
-  const raw=await idbGet('livroDaCasa_auto_'+String(d).trim());if(!raw){await customAlert('Cópia não encontrada.');return;}
-  if(!await customConfirm('Substituir TODOS os dados atuais pela cópia de '+d+'? Será guardada antes uma cópia do estado atual.','Restaurar'))return;
+  const idx=(await idbGet('livroDaCasa_auto_index'))||[];
+  const valid=[];
+  for(const d of idx){
+    const raw=await idbGet('livroDaCasa_auto_'+d);
+    if(raw && String(raw).length>200){
+      try{const j=JSON.parse(raw);if(j&&j.properties)valid.push(d);}catch(e){}
+    }
+  }
+  if(!valid.length){await customAlert('Não há cópias automáticas válidas.');return;}
+  const d=await customPromptDialog('Cópias válidas: '+valid.join(', ')+'\nData a restaurar (AAAA-MM-DD):',valid[valid.length-1],'Restaurar cópia automática');
+  if(d===null)return;
+  const key=String(d).trim();
+  if(!valid.includes(key)){await customAlert('Data inválida ou cópia sem conteúdo útil.');return;}
+  const raw=await idbGet('livroDaCasa_auto_'+key);if(!raw){await customAlert('Cópia não encontrada.');return;}
+  if(!await customConfirm('Substituir TODOS os dados atuais pela cópia de '+key+'? Será guardada antes uma cópia do estado atual.','Restaurar'))return;
   await autoSnapshot();await idbSet(IDB_KEY_MAIN,raw);try{localStorage.setItem(STORE_KEY,raw);}catch(e){}location.reload();
 }
 async function showConsistency(){const r=runConsistencyCheck();const l=[...r.serious.map(x=>'⚠ '+x),...r.info.map(x=>'ℹ '+x)];await customAlert(l.length?l.join('\n'):'✓ Dados consistentes.','Verificação de dados');}
@@ -10581,7 +10636,10 @@ renderContractAlerts=function(){
   _rcaOrig();const el=document.getElementById('contractAlerts');if(!el)return;const now=new Date(),td=new Date(now.getFullYear(),now.getMonth(),now.getDate()),out=[];
   Object.entries(state.tenants||{}).forEach(([rid,t])=>{if(!t||currentAutoStatus(rid)==='vago'||!t.data_inicio)return;
     const st=new Date(t.data_inicio+'T00:00:00');let c=new Date(td.getFullYear(),st.getMonth(),st.getDate());if(c<td)c=new Date(td.getFullYear()+1,st.getMonth(),st.getDate());
-    const days=Math.round((c-td)/864e5);if(c.getFullYear()-st.getFullYear()>=1&&days<=45)out.push('Quarto '+rid+' · '+escapeHTML(t.nome||'')+' — atualização de renda (aniversário) em '+days+' dia(s)');
+    const days=Math.round((c-td)/864e5);
+    /* P08 — alertas de aniversário/renovação também para contratos < 1 ano */
+    if(days>=0&&days<=45)out.push('Quarto '+rid+' · '+escapeHTML(t.nome||'')+' — aniversário/renovação em '+days+' dia(s)');
+    if(t.data_final){const df=daysUntil(t.data_final);if(df!=null&&df>=0&&df<=45)out.push('Quarto '+rid+' · '+escapeHTML(t.nome||'')+' — fim de contrato em '+df+' dia(s)');}
     const v=t.fiscal&&t.fiscal.docValidade;if(v){const dv=daysUntil(v);if(dv!=null&&dv<=45)out.push('Quarto '+rid+' · '+escapeHTML(t.nome||'')+' — documento '+(dv<0?'expirado há '+(-dv):'expira em '+dv)+' dia(s)');}});
   out.forEach(m=>{const d=document.createElement('div');d.style.cssText='padding:8px 12px;margin-top:8px;border:1px solid var(--amber);border-radius:6px;font-size:13px;';d.textContent='';d.innerHTML='⏰ '+m;el.appendChild(d);});
 };
@@ -10607,7 +10665,10 @@ function decorateHoje(){
   d.innerHTML='<div>'+chip('Ocupação',m.occ,col(m.occ,90,75))+chip('Cobrança do mês',m.col,col(m.col,90,70))+chip('Margem do ano',m.margin,col(m.margin==null?0:m.margin,50,30))+'</div><div id="hojeBtns"></div>';
   /* wrapper P03 — não usar referência directa a funções reatribuídas */
   [['Pagar em lote',()=>payMonthBatch()],['Cobrar em atraso',()=>collectAllOverdue()],['Fechar mês',()=>closeMonthChecklist()],['🛠 Ferramentas',()=>openToolsMenu()]].forEach(([l,f])=>{const b=document.createElement('button');b.type='button';b.className='inq-filter-btn';b.textContent=l;b.onclick=f;d.querySelector('#hojeBtns').appendChild(b);});
-  host.insertBefore(d,host.firstChild);
+  /* P13 — barra de métricas acima da grelha (não é cartão; append evita conflito de order) */
+  const gridEl=document.getElementById('hojeGrid');
+  if(gridEl&&gridEl.parentNode===host)host.insertBefore(d,gridEl);
+  else host.appendChild(d);
 }
 const _rhOrig=renderHojeTab;renderHojeTab=function(){_rhOrig();try{decorateHoje();}catch(e){console.warn(e);}};
 async function askMonthKey(def){const v=await customPromptDialog('Mês ('+MONTH_KEYS.join(', ')+'):',def,'Mês');if(v===null)return null;const k=String(v).trim().toUpperCase();if(!MONTH_KEYS.includes(k)){await customAlert('Mês inválido.');return null;}return k;}
@@ -10720,9 +10781,19 @@ function decorateHojeLayout(){
   card.innerHTML='<h3>Preço ideal por quarto</h3><p style="font-size:11px;color:var(--paper-dim);margin:0 0 8px">Mediana da casa e vagas do ano. Sugestão simples, não é análise de mercado.</p>'+
     (ch.length?ch.map(r=>{const d=r.sug-r.cur;return '<div class="alert-row" style="display:flex;justify-content:space-between;gap:8px;padding:6px 0"><span>Quarto '+r.rid+' · '+r.h+' — '+fmt(r.cur)+' → <b>'+fmt(r.sug)+'</b></span><span style="color:'+(d>0?'#2e9e6b':'#d99a1c')+'">'+(d>0?'+':'')+fmt(d)+'</span></div>';}).join(''):'<div class="empty-note">Rendas alinhadas com a mediana. Nada a alterar.</div>')+
     '<div style="font-size:11px;color:var(--paper-dim);margin-top:6px">'+rows.length+' quartos analisados</div>';
+  /* P13 — ordenação só via CSS order (nunca insertBefore nos cartões) */
   grid.appendChild(card);
-  const ord={forecast:0,vacant:1,reminders:2,contracts:3,maint:4,debts:5,cobrancas:6,ideal:7,summary:-2,calendar:-1},f=(typeof hojeFilter!=='undefined')?hojeFilter:'all';
-  grid.querySelectorAll('[data-hoje-card]').forEach(c=>{const k=c.getAttribute('data-hoje-card');c.style.order=(k in ord)?ord[k]:9;if(k==='cobrancas')c.style.gridColumn='auto';if(k==='ideal'||k==='forecast')c.style.display=(f==='all')?'':'none';});
+  const ord={
+    summary:-2, calendar:-1, forecast:0, ideal:1, vacant:2,
+    reminders:3, contracts:4, maint:5, debts:6, cobrancas:7
+  };
+  const f=(typeof hojeFilter!=='undefined')?hojeFilter:'all';
+  grid.querySelectorAll('[data-hoje-card]').forEach(c=>{
+    const k=c.getAttribute('data-hoje-card');
+    c.style.order=(k in ord)?ord[k]:9;
+    if(k==='cobrancas')c.style.gridColumn='1 / -1';
+    if(k==='ideal'||k==='forecast')c.style.display=(f==='all')?'':'none';
+  });
 }
 {const _p=renderHojeTab;renderHojeTab=function(){_p();try{decorateHojeLayout();}catch(e){console.warn(e);}};}
 {const _c=renderCobrancasPorInquilino;renderCobrancasPorInquilino=function(){_c.apply(this,arguments);try{decorateHojeLayout();}catch(e){console.warn(e);}};}
@@ -10755,7 +10826,9 @@ function syncAutoReminders(){
   state.reminders=state.reminders||[];const td=new Date(localDateString()+'T00:00:00'),want={},p2=n=>String(n).padStart(2,'0');
   Object.entries(state.tenants||{}).forEach(([rid,t])=>{if(!t||currentAutoStatus(rid)==='vago')return;const nm=t.nome||'';
     if(t.data_inicio){const st=new Date(t.data_inicio+'T00:00:00');let c=new Date(td.getFullYear(),st.getMonth(),st.getDate());if(c<td)c=new Date(td.getFullYear()+1,st.getMonth(),st.getDate());
-      if(c.getFullYear()-st.getFullYear()>=1){const ds=c.getFullYear()+'-'+p2(c.getMonth()+1)+'-'+p2(c.getDate());want['ann|'+rid+'|'+ds]={title:'Quarto '+rid+' · '+nm+' — atualização de renda (aniversário do contrato)',dueDate:ds,type:'Renda',roomId:rid};}}
+      /* P08 — lembrete de aniversário também para contratos não anuais */
+      const ds=c.getFullYear()+'-'+p2(c.getMonth()+1)+'-'+p2(c.getDate());want['ann|'+rid+'|'+ds]={title:'Quarto '+rid+' · '+nm+' — aniversário/renovação do contrato',dueDate:ds,type:'Renda',roomId:rid};}
+    if(t.data_final&&/^\d{4}-\d{2}-\d{2}$/.test(t.data_final))want['end|'+rid+'|'+t.data_final]={title:'Quarto '+rid+' · '+nm+' — fim de contrato',dueDate:t.data_final,type:'Contrato',roomId:rid};
     const v=t.fiscal&&t.fiscal.docValidade;if(v&&/^\d{4}-\d{2}-\d{2}$/.test(v))want['doc|'+rid+'|'+v]={title:'Quarto '+rid+' · '+nm+' — documento de identificação expira',dueDate:v,type:'Outro',roomId:rid};});
   let ch=false;Object.entries(want).forEach(([k,w])=>{if(!state.reminders.some(r=>r.autoKey===k)){state.reminders.push({id:featureId('rem'),title:w.title,dueDate:w.dueDate,leadDays:45,type:w.type,roomId:w.roomId,resolved:false,propertyId:store.currentId,auto:true,autoKey:k});ch=true;}});
   const keep=state.reminders.filter(r=>!(r.auto&&!r.resolved&&!(r.autoKey in want)));if(keep.length!==state.reminders.length){state.reminders=keep;ch=true;}return ch;
@@ -10874,9 +10947,24 @@ async function autoReconcileBank(){
   const html=props.map((p,i)=>'<label style="display:flex;gap:8px;padding:6px 0;font-size:12px;border-bottom:1px solid rgba(128,128,128,.25)"><input type="checkbox" data-p="'+i+'" '+(p.sc>=2?'checked':'')+'><span>'+escapeHTML(p.line.date)+' · '+fmt(p.line.amount)+'<br><i style="opacity:.7">'+escapeHTML(p.line.description.slice(0,50))+'</i><br>→ '+(p.kind==='link'?'associar ao pagamento do quarto '+escapeHTML(String(p.rid)):'marcar PAGO: quarto '+escapeHTML(String(p.rid))+' · '+p.mk)+'</span></label>').join('');
   const ov=overlayCard('Conciliação automática ('+props.length+')',html,[['Aplicar selecionadas',async()=>{const sel=[...ov.querySelectorAll('input[data-p]:checked')].map(i=>props[Number(i.dataset.p)]);const n=await applyBankProposals(sel);showSaveToast(true,n+' movimento(s) conciliados');}]]);
 }
+/* P15 — numeração de recibos persistente (não reutiliza números apagados) */
 function receiptNumber(rid,mk){
-  state.receipts=state.receipts||[];const year=Number(state.managementYear)||2026;let r=state.receipts.find(x=>x.year===year&&String(x.rid)===String(rid)&&x.mk===mk);
-  if(!r){const n=state.receipts.filter(x=>x.year===year).length+1;r={year,rid:String(rid),mk,no:year+'/'+String(n).padStart(4,'0'),at:new Date().toISOString()};state.receipts.push(r);saveState();}return r.no;
+  state.receipts=state.receipts||[];
+  state.receiptCounters=state.receiptCounters||{};
+  const year=Number(state.managementYear)||2026;
+  let r=state.receipts.find(x=>x.year===year&&String(x.rid)===String(rid)&&x.mk===mk);
+  if(!r){
+    if(state.receiptCounters[year]==null){
+      const existing=state.receipts.filter(x=>x.year===year).length;
+      state.receiptCounters[year]=existing;
+    }
+    state.receiptCounters[year]=(state.receiptCounters[year]||0)+1;
+    const n=state.receiptCounters[year];
+    r={year,rid:String(rid),mk,no:year+'/'+String(n).padStart(4,'0'),at:new Date().toISOString()};
+    state.receipts.push(r);
+    saveState();
+  }
+  return r.no;
 }
 {const _b=buildReceiptHtml;buildReceiptHtml=function(rid,mk,amount){let h=_b(rid,mk,amount);const tag='<p style="font-family:sans-serif;font-size:12px;margin:12px 24px">Recibo n.º <b>'+receiptNumber(rid,mk)+'</b></p>';return h.includes('</body>')?h.replace('</body>',tag+'</body>'):h+tag;};}
 async function receiptsOfMonth(){
