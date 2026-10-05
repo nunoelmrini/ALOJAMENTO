@@ -10821,7 +10821,7 @@ collectAllOverdue=async function(){
 };
 
 /* ===== Lembretes automáticos (aniversário de renda + documentos) e previsão do mês ===== */
-renderContractAlerts=_rcaOrig;
+/* B01 fix: NÃO repor renderContractAlerts=_rcaOrig — isso descartava o wrapper P08 */
 function syncAutoReminders(){
   state.reminders=state.reminders||[];const td=new Date(localDateString()+'T00:00:00'),want={},p2=n=>String(n).padStart(2,'0');
   Object.entries(state.tenants||{}).forEach(([rid,t])=>{if(!t||currentAutoStatus(rid)==='vago')return;const nm=t.nome||'';
