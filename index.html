@@ -1,6 +1,4 @@
 <!DOCTYPE html>
-<!-- build: foto-ui+auth-mobile 2026-10-05T20:45 WEST -->
-
 <html lang="pt-PT">
 <head>
 <meta charset="UTF-8">
@@ -788,6 +786,27 @@
   padding: 8px 12px; border-radius: var(--radius); cursor: pointer;
 }
 
+
+/* ===== Polimento mobile: cabeçalho compacto e fixo ===== */
+.mob-only{display:none}
+@media (max-width:760px){
+  header.top{position:sticky;top:0;z-index:130;padding:8px 12px !important;margin:0 !important;gap:8px;flex-wrap:nowrap !important;align-items:center;background:var(--panel)}
+  header.top .subtitle,header.top .backup-status,#saveSyncIndicator{display:none !important}
+  header.top .brand-mark{gap:8px;flex:none}header.top .brand-mark .num{font-size:1.5rem}header.top h1{font-size:1.05rem;margin:0}
+  header.top{display:flex !important;flex-direction:row !important}
+  header.top .header-actions{margin-left:auto;display:flex !important;gap:6px;align-items:center;flex-wrap:nowrap !important;width:auto !important;flex:0 1 auto !important;justify-content:flex-end;min-width:0}
+  #backupModalBtn{display:none !important}.mob-only{display:block !important}
+  header.top .header-actions .btn,header.top .header-actions .theme-toggle{flex:none !important;width:auto !important;min-width:0 !important;padding:8px 10px !important;font-size:11px}
+  header.top .brand-mark h1{white-space:nowrap}
+  .property-bar{display:flex !important;gap:6px;align-items:center;padding:6px 12px !important;flex-wrap:nowrap}
+  .property-bar label{display:none}#propertySelect{flex:1;min-width:0}#managementYearInput{width:72px !important}
+  #newPropertyBtn,#renamePropertyBtn,#deletePropertyBtn{display:none !important}
+  .search-bar{padding:0 12px 6px !important}
+  html,body{overflow-x:clip !important;overflow-y:visible !important}
+  .tab-nav{position:sticky;top:var(--hdr-h,52px);z-index:120}
+  main,.wrap{padding-bottom:calc(100px + env(safe-area-inset-bottom)) !important}
+  .save-toast{bottom:calc(78px + env(safe-area-inset-bottom)) !important;right:12px !important;left:12px !important}
+}
 </style>
 </head>
 <body>
@@ -9839,7 +9858,7 @@ function renderHojeTab() {
               '</div></div>' +
             '<span class="amount" style="' + (late ? 'color:var(--rust-bright)' : '') + '">' + fmt(it.val) + '</span>' +
           '</div>' +
-          '<div class="hoje-actions">' + cobBtn + waBtn + payBtn + goBtn(it.rid) + '</div></div>';
+          '<div class="hoje-actions">' + cobBtn + waBtn + payBtn + '<button type="button" class="btn ghost small" data-hoje-parcial="' + escapeHTML(String(it.rid)) + '|' + escapeHTML(it.mk) + '|' + escapeHTML(it.kind || 'renda') + '">Parcial</button><button type="button" class="btn ghost small" data-hoje-lembrete="' + escapeHTML(String(it.rid)) + '|' + escapeHTML(it.mk) + '">Lembrete</button>' + goBtn(it.rid) + '</div></div>';
       })}
     </div>
     <div class="hoje-card" data-hoje-card="vacant"><h3>Quartos vagos / livres</h3>
@@ -10786,8 +10805,8 @@ function decorateHojeLayout(){
   /* P13 — ordenação só via CSS order (nunca insertBefore nos cartões) */
   grid.appendChild(card);
   const ord={
-    summary:-2, calendar:-1, forecast:0, ideal:1, vacant:2,
-    reminders:3, contracts:4, maint:5, debts:6, cobrancas:7
+    summary:-2, calendar:-1, forecast:0, ideal:7, vacant:1,
+    reminders:2, contracts:3, maint:4, debts:5, cobrancas:6
   };
   const f=(typeof hojeFilter!=='undefined')?hojeFilter:'all';
   grid.querySelectorAll('[data-hoje-card]').forEach(c=>{
@@ -10895,7 +10914,7 @@ function overlayCard(title,html,btns){
   ov.appendChild(b);ov.onclick=e=>{if(e.target===ov)ov.remove();};document.body.appendChild(ov);return ov;
 }
 function openToolsMenu(){
-  const items=[['Pagamento parcial',partialPayment],['Atualizar rendas %',()=>clickByText('Atualizar rendas %')],['Extrato por inquilino',()=>clickByText('Extrato inquilino')],['Duplicar ficha',duplicateTenantRecord],['Análise (vagas e caixa)',showAnalysis],['Preço ideal por quarto',showIdealPrices],['Alterações / desfazer',showChangeLog],['Verificar dados',showConsistency],['Testes de cálculo',showSelfTests],['Restaurar cópia automática',restoreAutoSnapshot],['Conciliar extrato bancário',autoReconcileBank],['Recibos do mês',receiptsOfMonth],['Montra: quartos e fotos',openShowcaseEditor],['Candidatos',showCandidates],['Portal do inquilino',openPortalManager],['Portal: NIBs e pagamentos',openPaySettings],['Pedidos dos inquilinos',showRequests],['Comunicados',openAnnouncements],['Link da montra (partilhar)',shareShowcaseLink],['Limpeza da casa',openLimpeza],['Pedidos e reservas',openReservas]];
+  const items=[['Pagamento parcial',partialPayment],['Atualizar rendas %',()=>clickByText('Atualizar rendas %')],['Extrato por inquilino',()=>clickByText('Extrato inquilino')],['Duplicar ficha',duplicateTenantRecord],['Análise (vagas e caixa)',showAnalysis],['Preço ideal por quarto',showIdealPrices],['Alterações / desfazer',showChangeLog],['Verificar dados',showConsistency],['Testes de cálculo',showSelfTests],['Restaurar cópia automática',restoreAutoSnapshot],['Conciliar extrato bancário',autoReconcileBank],['Recibos do mês',receiptsOfMonth],['Montra: quartos e fotos',openShowcaseEditor],['Candidatos',showCandidates],['Portal do inquilino',openPortalManager],['Portal: NIBs e pagamentos',openPaySettings],['Pedidos dos inquilinos',showRequests],['Comunicados',openAnnouncements],['Link da montra (partilhar)',shareShowcaseLink],['Limpeza da casa',openLimpeza],['Pedidos e reservas',openReservas],['Diagnóstico',openDiagnostics]];
   const ov=overlayCard('Ferramentas','<div id="toolsList"></div>');const l=ov.querySelector('#toolsList');
   items.forEach(([t,f])=>{const b=document.createElement('button');b.type='button';b.className='inq-filter-btn';b.style.cssText='display:block;width:100%;text-align:left;margin:0 0 6px';b.textContent=t;b.onclick=()=>{ov.remove();f();};l.appendChild(b);});
 }
@@ -10957,10 +10976,10 @@ function receiptNumber(rid,mk){
   let r=state.receipts.find(x=>x.year===year&&String(x.rid)===String(rid)&&x.mk===mk);
   if(!r){
     if(state.receiptCounters[year]==null){
-      const existing=state.receipts.filter(x=>x.year===year).length;
-      state.receiptCounters[year]=existing;
+      state.receiptCounters[year]=0;
     }
-    state.receiptCounters[year]=(state.receiptCounters[year]||0)+1;
+    const maxNo=state.receipts.filter(x=>x.year===year).reduce((mx,x)=>Math.max(mx,parseInt(String(x.no||'').split('/')[1],10)||0),0);
+    state.receiptCounters[year]=Math.max(state.receiptCounters[year]||0,maxNo)+1;
     const n=state.receiptCounters[year];
     r={year,rid:String(rid),mk,no:year+'/'+String(n).padStart(4,'0'),at:new Date().toISOString()};
     state.receipts.push(r);
@@ -11314,6 +11333,86 @@ window.__cloudReload = async function(remote) {
     return false;
   }
 };
+
+/* ===== P18+P38: registo de erros e diagnóstico ===== */
+const LOG_LV={debug:0,info:1,warn:2,error:3};let __logRing=null,__logDirty=false,__lastToast=0;
+const logLevel=()=>localStorage.getItem('livroDaCasa_logLevel')||'warn';
+async function logLoad(){if(__logRing)return __logRing;try{__logRing=(await idbGet('livroDaCasa_logs'))||[];}catch(e){__logRing=[];}return __logRing;}
+async function logPush(level,msg,extra){if(LOG_LV[level]<LOG_LV[logLevel()])return;const r=await logLoad();r.push({ts:new Date().toISOString(),level,msg:String(msg).slice(0,400),extra:extra?String(extra).slice(0,600):''});if(r.length>300)r.splice(0,r.length-300);__logDirty=true;}
+function log(level,...a){const m=a.map(x=>x&&x.message?x.message:(typeof x==='object'?(()=>{try{return JSON.stringify(x);}catch(e){return String(x);}})():String(x))).join(' ');logPush(level,m,a.find(x=>x&&x.stack)&&a.find(x=>x&&x.stack).stack);}
+{const _w=console.warn,_e=console.error;console.warn=function(...a){_w.apply(console,a);try{log('warn',...a);}catch(e){}};console.error=function(...a){_e.apply(console,a);try{log('error',...a);}catch(e){}};}
+function errToast(){if(!window.__bootDone||Date.now()-__lastToast<10000)return;__lastToast=Date.now();try{showSaveToast(false,'Erro inesperado (guardado em Ferramentas → Diagnóstico)');}catch(e){}}
+window.addEventListener('error',e=>{logPush('error',(e.message||'erro')+' @'+(e.filename||'').split('/').pop()+':'+e.lineno,e.error&&e.error.stack);errToast();});
+window.addEventListener('unhandledrejection',e=>{const r=e.reason;logPush('error','promessa rejeitada: '+((r&&r.message)||r),r&&r.stack);errToast();});
+setInterval(async()=>{if(__logDirty&&__logRing){__logDirty=false;try{await idbSet('livroDaCasa_logs',__logRing);}catch(e){}}},3000);
+setTimeout(()=>{window.__bootDone=true;},12000);
+async function openDiagnostics(){
+  const r=await logLoad(),lv=logLevel(),rows=r.slice(-30).reverse(),col={error:'#ff7a6b',warn:'#f0b44c',info:'#9aa3b8',debug:'#9aa3b8'};
+  const ov=overlayCard('Diagnóstico','<div style="font-size:12px;margin-bottom:8px">Nível de registo: <select id="dgLv" style="padding:4px;background:#0a0e17;color:#fff;border:1px solid #2a3550;border-radius:6px">'+['debug','info','warn','error'].map(x=>'<option '+(x===lv?'selected':'')+'>'+x+'</option>').join('')+'</select> · '+r.length+' registos guardados</div><div style="max-height:45vh;overflow:auto;font-size:11px;font-family:monospace">'+(rows.length?rows.map(x=>'<div style="padding:4px 0;border-bottom:1px solid rgba(128,128,128,.25)"><span style="color:'+col[x.level]+'">'+x.level.toUpperCase()+'</span> '+escapeHTML(x.ts.slice(5,19).replace('T',' '))+'<br>'+escapeHTML(x.msg)+'</div>').join(''):'<small>Sem registos. A app não guardou avisos nem erros.</small>')+'</div>',
+    [['Exportar JSON',()=>downloadFile('diagnostico-livro-da-casa.json',JSON.stringify(r,null,1),'application/json')],['Limpar registos',async()=>{__logRing=[];__logDirty=true;showSaveToast(true,'Registos limpos');}]]);
+  ov.querySelector('#dgLv').onchange=e=>localStorage.setItem('livroDaCasa_logLevel',e.target.value);
+}
+/* ===== P26 (parcial): Parcial e Lembrete nas dívidas do Hoje ===== */
+async function partialFromHoje(rid,mk,kind){
+  const year=Number(state.managementYear)||2026,i=MONTH_KEYS.indexOf(mk),ym=year+'-'+String(i+1).padStart(2,'0'),cat=kind==='despesas'?'Recuperação de despesas':'Renda';
+  const due=kind==='despesas'?(Number(effectiveExpenseAlloc(mk,rid))||0):(Number(effectiveTotalPagar(mk,rid))||0);
+  const paid=(state.transactions||[]).filter(t=>t.type==='income'&&String(t.roomId)===String(rid)&&t.category===cat&&String(t.date).slice(0,7)===ym).reduce((a,t)=>a+(Number(t.amount)||0),0),falta=Math.max(0,Math.round((due-paid)*100)/100);
+  if(falta<=0){await customAlert('Este valor já está pago.');return;}
+  const v=await customPromptDialog('Valor recebido (€). Em falta: '+fmt(falta),String(Math.round(falta/2*100)/100),'Pagamento parcial');if(v===null)return;const amt=Number(String(v).replace(',','.'));if(!(amt>0)){await customAlert('Valor inválido.');return;}
+  const dt=await customPromptDialog('Data (AAAA-MM-DD):',todayISO(),'Pagamento parcial');if(dt===null)return;const d=/^\d{4}-\d{2}-\d{2}$/.test(String(dt).trim())?String(dt).trim():todayISO();
+  const me=await customPromptDialog('Método:','Transferência','Pagamento parcial');if(me===null)return;
+  state.transactions.push({id:featureId('tx'),date:d,type:'income',roomId:String(rid),category:cat,amount:Math.round(amt*100)/100,method:(me||'Transferência').trim(),notes:'Pagamento parcial',propertyId:store.currentId,source:'partial'});
+  if(paid+amt>=due-0.005)await setPanelPaymentStatus(kind,rid,'Pago',mk);else{await saveState();renderHojeTab();}
+  showSaveToast(true,paid+amt>=due-0.005?'Liquidado':'Parcial registado · em falta '+fmt(due-paid-amt));
+}
+async function reminderFromHoje(rid,mk){
+  const d=new Date(Date.now()+3*864e5),ds=isoD(d);state.reminders=state.reminders||[];
+  state.reminders.push({id:featureId('rem'),title:'Cobrar '+mk+' — quarto '+rid,dueDate:ds,leadDays:0,type:'Renda',roomId:String(rid),resolved:false,propertyId:store.currentId});
+  await saveState();renderHojeTab();showSaveToast(true,'Lembrete criado para '+ds.split('-').reverse().join('/'));
+}
+document.addEventListener('click',e=>{const a=e.target.closest&&e.target.closest('[data-hoje-parcial]'),b=e.target.closest&&e.target.closest('[data-hoje-lembrete]');
+  if(a){const [r,m,k]=a.dataset.hojeParcial.split('|');partialFromHoje(r,m,k);}else if(b){const [r,m]=b.dataset.hojeLembrete.split('|');reminderFromHoje(r,m);}});
+/* ===== P23: cronologia do quarto (na ficha) ===== */
+function roomTimeline(rid){
+  const ev=[],t=state.tenants[rid]||{},room=state.rooms.find(r=>String(r.id)===String(rid))||{},add=(d,kind,title,amt)=>{if(d&&/^\d{4}-\d{2}-\d{2}/.test(d))ev.push({d:String(d).slice(0,10),kind,title:String(title||'').slice(0,90),amt});};
+  add(t.data_inicio,'contrato','Início do contrato');add(t.data_final,'contrato','Fim do contrato');(t.history||[]).forEach(h=>{add(h.data_final||h.fim,'contrato','Inquilino anterior: '+(h.nome||''));});
+  (state.transactions||[]).filter(x=>String(x.roomId)===String(rid)).forEach(x=>add(x.date,'pagamento',(x.type==='income'?'Recebido · ':'Pago · ')+(x.category||''),Number(x.amount)));
+  (state.maintenanceTasks||[]).filter(x=>String(x.roomId||x.rid||'')===String(rid)).forEach(x=>add(x.dueDate||x.date||x.createdAt,'manutencao','Manutenção: '+(x.title||x.titulo||x.desc||x.description||'')));
+  (room.interventions||[]).forEach(x=>add(x.date||x.data||x.createdAt,'obra','Obra: '+(x.title||x.titulo||x.desc||x.description||'')+(x.status?' ('+x.status+')':'')));
+  (state.reminders||[]).filter(x=>String(x.roomId||'')===String(rid)).forEach(x=>add(x.dueDate,'lembrete',x.title));
+  (state.reservas||[]).filter(x=>String(x.rid)===String(rid)).forEach(x=>add(x.data||(x.at||'').slice(0,10),'pedido',x.tipo+' ('+x.estado+')'));
+  regList().filter(x=>x.r===String(rid)).forEach(x=>add(x.ds,'limpeza','Limpeza '+(x.feito?'feita':'não feita')));
+  return ev.sort((a,b)=>b.d.localeCompare(a.d)).slice(0,60);
+}
+function injectTimeline(rid){
+  const prev=document.getElementById('tmTimelineBox');if(prev)prev.remove();const base=document.getElementById('tmLimpezaBox');if(!base)return;
+  const C={contrato:'#3b82f6',pagamento:'#2e9e6b',manutencao:'#d99a1c',obra:'#d24a4a',lembrete:'#a855f7',pedido:'#06b6d4',limpeza:'#8a8f9c'},ev=roomTimeline(rid),box=document.createElement('div');box.id='tmTimelineBox';box.style.cssText='border-top:1px solid rgba(128,128,128,.3);margin-top:12px;padding-top:8px;font-size:13px';
+  const draw=f=>{const l=ev.filter(x=>f==='todos'||x.kind===f);box.querySelector('#tlList').innerHTML=l.length?l.map(x=>'<div style="display:flex;gap:8px;padding:3px 0;border-left:2px solid rgba(128,128,128,.35);padding-left:8px"><span style="width:9px;height:9px;border-radius:50%;background:'+C[x.kind]+';margin:5px 0 0 -14px;flex:none"></span><span style="flex:1"><b>'+x.d.split('-').reverse().join('/')+'</b> · '+escapeHTML(x.title)+(x.amt?' · '+fmt(x.amt):'')+'</span></div>').join(''):'<small>Sem eventos.</small>';};
+  box.innerHTML='<b>🕒 Cronologia do quarto</b> <select id="tlF" style="padding:3px;margin-left:6px;font-size:12px">'+['todos'].concat(Object.keys(C)).map(k=>'<option>'+k+'</option>').join('')+'</select><div id="tlList" style="max-height:220px;overflow:auto;margin-top:6px"></div>';
+  base.parentElement.insertBefore(box,base.nextSibling);draw('todos');box.querySelector('#tlF').onchange=e=>draw(e.target.value);
+}
+{const _it=injectTenantExtras;injectTenantExtras=function(rid){_it(rid);try{injectTimeline(rid);}catch(e){console.warn('timeline',e);}};}
+
+/* ===== Polimento: menu Mais completo no telemóvel, altura do cabeçalho e tema automático ===== */
+(function(){
+  const mm=document.getElementById('headerMoreMenu');
+  if(mm)[['📦 BACKUPS','backupModalBtn'],['+ Nova propriedade','newPropertyBtn'],['Renomear propriedade','renamePropertyBtn'],['Apagar propriedade','deletePropertyBtn']].reverse().forEach(([l,id])=>{const b=document.createElement('button');b.type='button';b.className='theme-toggle mob-only';b.textContent=l;b.onclick=()=>{const t=document.getElementById(id);if(t)t.click();};mm.prepend(b);});
+  const setH=()=>{const h=document.querySelector('header.top');if(h)document.documentElement.style.setProperty('--hdr-h',h.offsetHeight+'px');};
+  setH();addEventListener('resize',setH);setTimeout(setH,1500);
+  const K='livroDaCasa_theme',mq=matchMedia('(prefers-color-scheme: light)'),auto=()=>{if(localStorage.getItem(K))return;document.documentElement.setAttribute('data-theme',mq.matches?'light':'dark');};
+  auto();if(mq.addEventListener)mq.addEventListener('change',auto);
+})();
+
+/* ===== Montra: ordenar fotos (setas) ===== */
+{const st=document.createElement('style');st.textContent='.ph-cover{display:none;position:absolute;left:4px;top:4px;background:#1f7a5a;color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:6px}div[data-photo-id]:first-child .ph-cover{display:block}';document.head.appendChild(st);}
+{const _pt=photoThumbEl;photoThumbEl=function(target,id,dataUrl,onDeleted){
+  const w=_pt(target,id,dataUrl,onDeleted),lst=()=>{const sh=SH();return target.startsWith('H:')?((sh.houses[target.slice(2)]||{}).fotos||[]):((sh.rooms[target]||{}).fotos||[]);};
+  const cv=document.createElement('span');cv.className='ph-cover';cv.textContent='Capa';w.appendChild(cv);
+  const mk=(txt,title,dir)=>{const b=document.createElement('button');b.type='button';b.textContent=txt;b.title=title;b.style.cssText='position:absolute;bottom:4px;'+(dir<0?'left':'right')+':4px;width:26px;height:26px;border:0;border-radius:50%;background:rgba(0,0,0,.72);color:#fff;font-size:13px;cursor:pointer;line-height:1';
+    b.onclick=async(e)=>{e.preventDefault();e.stopPropagation();const L=lst(),i=L.indexOf(id),j=i+dir;if(i<0||j<0||j>=L.length)return;[L[i],L[j]]=[L[j],L[i]];
+      const par=w.parentElement;if(dir<0&&w.previousElementSibling&&w.previousElementSibling.dataset.photoId)par.insertBefore(w,w.previousElementSibling);else if(dir>0&&w.nextElementSibling&&w.nextElementSibling.dataset.photoId)par.insertBefore(w.nextElementSibling,w);
+      await saveState();showSaveToast(true,'Ordem guardada · carrega em "Guardar e publicar" para a montra');};w.appendChild(b);};
+  mk('◀','Mover para a esquerda',-1);mk('▶','Mover para a direita',1);return w;};}
 </script>
 <nav class="bottom-nav" id="bottomNav" aria-label="Navegação principal">
   <button type="button" data-tab="hoje" class="active"><span>◎</span>Hoje</button>
