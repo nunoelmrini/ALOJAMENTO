@@ -11231,9 +11231,9 @@ function LP(){const L=state.limpeza=state.limpeza||{};L.escala=L.escala||{baixo:
 const escRooms=e=>e?(e.rooms||(e.room?[e.room]:[])).map(String).filter(Boolean):[];
 function limpezaDays(h,n){const L=LP(),out=[],seen=new Set(),t=new Date();t.setHours(0,0,0,0);const lim=isoD(new Date(t.getTime()-n*864e5));Object.entries(L.registo).forEach(([k,r])=>{const [ds,hh,room]=k.split('|');if(hh===h&&ds>=lim){out.push({data:ds,room,feito:!!r.feito,por:r.por||'',em:r.at||''});seen.add(k);}});for(let i=n;i>=0;i--){const d=new Date(t);d.setDate(t.getDate()-i);const ds=isoD(d);escRooms(L.escala[h][wdOf(ds)]).forEach(r=>{if(!seen.has(ds+'|'+h+'|'+r))out.push({data:ds,room:r,feito:null,por:'',em:''});});}return out.sort((x,y)=>x.data.localeCompare(y.data));}
 async function syncTenantInputs(){
-  const F=window.__fb;if(!F||!F.uid)return 0;const snap=await F.db.collection('pedidos').orderBy('at','desc').limit(100).get(),rev={};Object.entries(state.tenants||{}).forEach(([rid,t])=>{if(t&&t.portalToken)rev[t.portalToken]=rid;});
+  const F=window.__fb;if(!F||!F.uid)return 0;const snap=await F.db.collection('pedidos').orderBy('at','desc').limit(100).get();
   const L=LP();state.reservas=state.reservas||[];let n=0;const upd=[];
-  snap.forEach(d=>{const c=d.data();if(c.estado!=='novo'||!(c.tipo==='limpeza'||c.tipo==='reserva'))return;const rid=rev[c.token];if(!rid)return;const room=state.rooms.find(r=>String(r.id)===String(rid)),h=room&&room.house;
+  snap.forEach(d=>{const c=d.data();if(c.estado!=='novo'||!(c.tipo==='limpeza'||c.tipo==='reserva'))return;const rid=String(c.quarto||'');if(!rid)return;const room=state.rooms.find(r=>String(r.id)===String(rid)),h=room&&room.house;
     if(c.tipo==='limpeza'){const [dt,st]=String(c.texto).split('|'),ok=h&&/^\d{4}-\d{2}-\d{2}$/.test(dt)&&escRooms(L.escala[h][wdOf(dt)]).includes(String(rid));if(ok){L.registo[dt+'|'+h+'|'+rid]={feito:st==='feito',by:'inquilino',nome:String((state.tenants[rid]||{}).nome||''),at:c.at};n++;}}
     else{const [tp,dt,nota]=String(c.texto).split('|');state.reservas.push({id:featureId('rs'),rid:String(rid),house:h,tipo:tp||'Outro',data:/^\d{4}-\d{2}-\d{2}$/.test(dt||'')?dt:'',nota:(nota||'').slice(0,120),estado:'pendente',at:c.at});n++;}upd.push(d.id);});
   for(const id of upd){try{await F.db.collection('pedidos').doc(id).update({estado:'importado'});}catch(e){}}
