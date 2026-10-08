@@ -3960,6 +3960,18 @@ async function loadState() {
   } catch (e) { console.warn('Dados legados ilegíveis:', e); }
 
   let lastError = null, rejectedSource = false;
+  // Correcção 1.3 - se todos os candidatos tem savedAt, prefere o mais recente
+  const __allHaveSavedAt = candidates.length > 0 && candidates.every(function(c) {
+    try { const j = JSON.parse(c.raw); return !!(j && j.savedAt); } catch (e) { return false; }
+  });
+  if (__allHaveSavedAt) {
+    candidates.sort(function(a, b) {
+      var aAt = 0, bAt = 0;
+      try { aAt = new Date(JSON.parse(a.raw).savedAt).getTime() || 0; } catch (e) {}
+      try { bAt = new Date(JSON.parse(b.raw).savedAt).getTime() || 0; } catch (e) {}
+      return bAt - aAt;
+    });
+  }
   for (const candidate of candidates) {
     try {
       const parsed = JSON.parse(candidate.raw);
@@ -4032,6 +4044,7 @@ async function saveStateInternal() {
   }
  try {
      store.schemaVersion = STORE_SCHEMA_VERSION;
+     store.savedAt = new Date().toISOString();
     state.yearlyFinancials = state.yearlyFinancials || {};
     state.yearlyFinancials[Number(state.managementYear) || 2026] = captureYearFinancials();
     store.properties[store.currentId].data = state;
@@ -4352,6 +4365,13 @@ function daysUntil(dateStr) {
  return Math.round((target - now) / 86400000);
 }
 function getCssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+function sanitizeText(s, maxLen) {
+  if (s == null) return '';
+  var out = String(s).replace(/[<>`]/g, '').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '').trim();
+  if (typeof maxLen === 'number' && maxLen > 0) out = out.slice(0, maxLen);
+  return out;
+}
 
 function badgeClass(status) {
  switch(status) {
