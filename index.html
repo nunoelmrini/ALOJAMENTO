@@ -11167,10 +11167,76 @@ async function showRequests(){
   const F=window.__fb;if(!F||!F.uid){await customAlert('Entra primeiro na nuvem (botão ☁ no topo).');return;}
   const snap=await F.db.collection('pedidos').orderBy('at','desc').limit(50).get(),rows=[];snap.forEach(d=>rows.push({id:d.id,...d.data()}));if(!rows.length){await customAlert('Sem pedidos dos inquilinos.');return;}
   const est=['novo','em curso','resolvido'],ov=overlayCard('Pedidos ('+rows.length+')','<div id="rqList"></div>'),l=ov.querySelector('#rqList');
-  rows.forEach(c=>{const d=document.createElement('div');d.style.cssText='padding:8px 0;border-bottom:1px solid rgba(128,128,128,.25);font-size:12px';d.innerHTML='<b>'+escapeHTML(c.tipo||'')+'</b> · quarto '+escapeHTML(String(c.quarto||''))+(c.mes?' · '+escapeHTML(c.mes):'')+' · '+escapeHTML(String(c.at||'').slice(0,10))+'<br>'+escapeHTML((c.texto||'').slice(0,200))+'<br>'+(c.foto?'<img src="'+c.foto+'" style="max-width:100%;max-height:160px;border-radius:6px;margin:4px 0"><br>':'');
-    const sel=document.createElement('select');est.forEach(e=>{const o=document.createElement('option');o.textContent=e;if((c.estado||'novo')===e)o.selected=true;sel.appendChild(o);});sel.onchange=()=>F.db.collection('pedidos').doc(c.id).update({estado:sel.value});d.appendChild(sel);
+  rows.forEach(c=>{const d=document.createElement('div');d.style.cssText='padding:8px 0;border-bottom:1px solid rgba(128,128,128,.25);font-size:12px';var fotoHtml = '';
+    if (c.foto) {
+      fotoHtml = '<div style="margin:6px 0">'+
+        '<img src="'+c.foto+'" style="max-width:100%;max-height:220px;border-radius:8px;border:1px solid rgba(128,128,128,.35);cursor:zoom-in" data-zoom="1" title="Clique para ampliar">'+
+        '<div style="margin-top:4px;font-size:11px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">'+
+          '<a href="'+c.foto+'" download="pedido-'+String(c.tipo||'')+'-'+String(c.quarto||'')+'-'+String(c.at||'').slice(0,10)+'.jpg" style="color:var(--cyan);text-decoration:none">⬇ Descarregar</a>'+
+          '<button type="button" class="btn ghost small" data-del-photo="'+escapeHTML(c.id)+'" title="Apaga só a imagem, mantém o pedido">🗑 Apagar foto</button>'+
+        '</div></div>';
+    }
+    d.innerHTML='<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start"><div style="flex:1;min-width:0"><b>'+escapeHTML(c.tipo||'')+'</b> · quarto '+escapeHTML(String(c.quarto||''))+(c.mes?' · '+escapeHTML(c.mes):'')+' · '+escapeHTML(String(c.at||'').slice(0,10))+'<br>'+escapeHTML((c.texto||'').slice(0,200))+'</div>'+
+      '<button type="button" class="btn danger small" data-del-request="'+escapeHTML(c.id)+'" title="Apagar pedido por completo">🗑 Apagar</button></div>'+
+      fotoHtml;
+    const sel=document.createElement('select');est.forEach(e=>{const o=document.createElement('option');o.textContent=e;if((c.estado||'novo')===e)o.selected=true;sel.appendChild(o);});
+    sel.onchange=async()=>{
+      await F.db.collection('pedidos').doc(c.id).update({estado:sel.value});
+      if (sel.value==='resolvido' && c.foto) {
+        setTimeout(async()=>{
+          if (await customConfirm('Pedido marcado como resolvido. Apagar a foto para libertar espaco?','Limpar foto')) {
+            await F.db.collection('pedidos').doc(c.id).update({foto:''});
+            showSaveToast(true,'Foto apagada');
+            ov.remove();
+            await showRequests();
+          }
+        }, 400);
+      }
+    };
+    d.appendChild(sel);
     if(c.tipo==='comprovativo'&&c.mes&&MONTH_KEYS.includes(c.mes)){const b=document.createElement('button');b.type='button';b.className='inq-filter-btn';b.textContent='Marcar renda paga';b.onclick=async()=>{if(await customConfirm('Confirmas que viste o pagamento na conta? Marca '+c.mes+' do quarto '+c.quarto+' como pago.','Marcar pago')){if(await setPanelPaymentStatus('renda',String(c.quarto),'Pago',c.mes,{date:localDateString(),method:'Comprovativo (portal)'})){sel.value='resolvido';F.db.collection('pedidos').doc(c.id).update({estado:'resolvido'});}}};d.appendChild(b);}
     l.appendChild(d);});
+
+  l.querySelectorAll('img[data-zoom]').forEach(function(img) {
+    img.onclick = function() {
+      var ov2 = document.createElement('div');
+      ov2.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.92);display:flex;align-items:center;justify-content:center;padding:16px;cursor:zoom-out';
+      var imgBig = document.createElement('img');
+      imgBig.src = img.src;
+      imgBig.style.cssText = 'max-width:100%;max-height:92vh;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.6)';
+      ov2.appendChild(imgBig);
+      ov2.onclick = function() { ov2.remove(); };
+      document.body.appendChild(ov2);
+    };
+  });
+
+  l.querySelectorAll('[data-del-photo]').forEach(function(btn) {
+    btn.onclick = async function(e) {
+      e.stopPropagation();
+      var id = btn.getAttribute('data-del-photo');
+      if (!await customConfirm('Apagar a foto deste pedido?\n\nO texto mantem-se - so a imagem e removida. Isto liberta espaco na app.','Apagar foto')) return;
+      try {
+        await F.db.collection('pedidos').doc(id).update({foto:''});
+        showSaveToast(true,'Foto apagada');
+        ov.remove();
+        await showRequests();
+      } catch(err) { await customAlert('Erro ao apagar foto: '+(err.message||err)); }
+    };
+  });
+
+  l.querySelectorAll('[data-del-request]').forEach(function(btn) {
+    btn.onclick = async function(e) {
+      e.stopPropagation();
+      var id = btn.getAttribute('data-del-request');
+      if (!await customConfirm('Apagar este pedido por completo?\n\nEsta accao nao e reversivel.','Apagar pedido')) return;
+      try {
+        await F.db.collection('pedidos').doc(id).delete();
+        showSaveToast(true,'Pedido apagado');
+        ov.remove();
+        await showRequests();
+      } catch(err) { await customAlert('Erro ao apagar pedido: '+(err.message||err)); }
+    };
+  });
 }
 
 /* ===== Portal v2: despesas, NIBs/MB Way por inquilino, histórico completo, revogação automática ===== */
