@@ -11131,13 +11131,101 @@ async function openShowcaseEditor(){
   const pb=[...ov.querySelectorAll('button')].find(b=>b.textContent==='Guardar e publicar');
   pb.onclick=async(e)=>{e.stopPropagation();save();await saveState();const n=await publishShowcase();if(n>=0){showSaveToast(true,'Montra publicada: '+n+' quarto(s)');}};
 }
+async function acceptCandidate(c, ov, F){
+  const freeRooms = roomIds().filter(isRoomFreeForAssign);
+  if(!freeRooms.length){ await customAlert('Nao ha quartos livres. Liberte um quarto ou marque o contrato anterior como terminado.'); return; }
+  const roomsList = freeRooms.join(', ');
+  const preRoom = (c.roomId && freeRooms.map(String).includes(String(c.roomId))) ? String(c.roomId) : freeRooms[0];
+  const roomAns = await customPromptDialog('Quarto livre para atribuir ('+roomsList+'):', preRoom, 'Criar inquilino');
+  if(roomAns===null) return;
+  const rid = String(roomAns).trim();
+  if(!freeRooms.map(String).includes(rid)){ await customAlert('Quarto invalido ou nao esta livre. Escolha: '+roomsList); return; }
+  const preRent = (getRoom(rid) && getRoom(rid).baseRent) || 0;
+  const rentAns = await customPromptDialog('Renda mensal (EUR):', String(preRent||''), 'Criar inquilino');
+  if(rentAns===null) return;
+  const rent = Number(String(rentAns).replace(',','.'));
+  if(!(rent >= 0)){ await customAlert('Renda invalida.'); return; }
+  const preStart = (c.entrada && /^\d{4}-\d{2}-\d{2}$/.test(c.entrada)) ? c.entrada : localDateString();
+  const startAns = await customPromptDialog('Inicio do contrato (AAAA-MM-DD):', preStart, 'Criar inquilino');
+  if(startAns===null) return;
+  const start = String(startAns).trim();
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(start)){ await customAlert('Data invalida.'); return; }
+  const endAns = await customPromptDialog('Fim do contrato (AAAA-MM-DD, deixe vazio se indeterminado):', '', 'Criar inquilino');
+  if(endAns===null) return;
+  const end = String(endAns).trim();
+  if(end && !/^\d{4}-\d{2}-\d{2}$/.test(end)){ await customAlert('Data invalida.'); return; }
+  const ok = await customConfirm('Criar inquilino?\n\nQuarto: '+rid+'\nNome: '+(c.nome||'')+'\nContacto: '+(c.contacto||'')+'\nRenda: '+fmt(rent)+'\nInicio: '+start+(end?'\nFim: '+end:''), 'Confirmar criacao');
+  if(!ok) return;
+  const contacto = String(c.contacto||'').trim();
+  const isEmail = /@/.test(contacto);
+  const tel = isEmail ? '' : contacto;
+  const email = isEmail ? contacto : '';
+  const fiscal = { nomeCompleto: c.nome, telefone: tel, email: email, morada: '' };
+  if(c.ocupacao) fiscal.ocupacao = c.ocupacao;
+  const existing = state.tenants[rid] || {};
+  if(existing.nome && String(existing.nome).trim() && existing.data_final && daysUntil(existing.data_final) < 0){
+    if(!existing.history) existing.history = [];
+    existing.history.push({
+      nome: existing.nome, data_inicio: existing.data_inicio, data_final: existing.data_final,
+      renda: existing.renda, pax: existing.pax,
+      fiscal: existing.fiscal ? JSON.parse(JSON.stringify(existing.fiscal)) : {},
+      paymentSnapshot: buildPaymentSnapshotForRoom(rid, existing.data_inicio, existing.data_final),
+      txSnapshot: buildTxSnapshotForRoom(rid, existing.data_inicio, existing.data_final),
+      archivedAt: localDateString()
+    });
+  }
+  state.tenants[rid] = {
+    nome: c.nome, renda: rent, data_inicio: start, data_final: end, pax: 1,
+    status: 'ocupado', fiscal: fiscal, history: existing.history || [],
+    checklist: DEFAULT_CHECKLIST.map(function(l){return { label: l, done: false };} ),
+    caucao: rent, caucaoPagamentos: [], caucaoDestino: 'pendente'
+  };
+  if(state.tenants[rid].statusOverride) delete state.tenants[rid].statusOverride;
+  syncMonthlyRentsForTenant(rid);
+  const startY = Number(start.slice(0,4));
+  const startM = Number(start.slice(5,7)) - 1;
+  const year = Number(state.managementYear) || new Date().getFullYear();
+  if(startY === year && startM >= 0 && startM < 12){
+    const mk = MONTH_KEYS[startM];
+    if(!state.overrides) state.overrides = {};
+    state.overrides[ovKey(mk, rid)] = 'Pago';
+    if(!state.transactions) state.transactions = [];
+    const ref = panelStatusRef('renda', rid, mk);
+    if(rent > 0){
+      state.transactions = state.transactions.filter(function(t){return !(t.statusRef === ref && t.source === 'panel_status');});
+      state.transactions.push({
+        id: featureId('tx'), date: start, type: 'income', roomId: String(rid),
+        category: 'Renda', method: 'Pagamento inicial (entrada)',
+        notes: 'Renda do mes de entrada - criada via candidato',
+        amount: rent, propertyId: store.currentId, statusRef: ref,
+        statusMeta: { year: year, month: mk, roomId: String(rid), kind: 'renda' },
+        source: 'entry_rent'
+      });
+    }
+  }
+  const ok2 = await saveState();
+  if(!ok2) return;
+  try { await F.db.collection('candidatos').doc(c.id).update({ estado: 'convertido', tenantRid: String(rid), convertedAt: new Date().toISOString() }); } catch(e){ console.warn(e); }
+  try { await publishPortal(true); } catch(e){}
+  try { await publishShowcase(); } catch(e){}
+  const link = portalLink(rid);
+  await customAlert('Inquilino criado no quarto '+rid+'.\n\nPortal: '+link+'\n\nRenda: '+fmt(rent)+'\nInicio: '+start+(end?'\nFim: '+end:'')+'\n\nRenda do mes de entrada marcada como paga. Abre a ficha do quarto para completar dados fiscais.', 'Inquilino criado');
+  if(tel){
+    const wa = await customConfirm('Enviar o link do portal ao inquilino por WhatsApp?', 'Enviar link');
+    if(wa) openWhatsAppToNumber(tel, 'Ola '+String(c.nome||'').split(' ')[0]+', bem-vindo ao quarto '+rid+'. Aqui tens o teu portal: '+link);
+  }
+  ov.remove();
+  await showCandidates();
+}
+
 async function showCandidates(){
   const F=window.__fb;if(!F||!F.uid){await customAlert('Entra primeiro na nuvem (botão ☁ no topo).');return;}
   const snap=await F.db.collection('candidatos').orderBy('at','desc').limit(50).get(),rows=[];snap.forEach(d=>rows.push({id:d.id,...d.data()}));
   if(!rows.length){await customAlert('Ainda não há candidatos.');return;}
-  const est=['novo','contactado','visita marcada','aceite','recusado'],ov=overlayCard('Candidatos ('+rows.length+')','<div id="candList"></div>');const l=ov.querySelector('#candList');
+  const est=['novo','contactado','visita marcada','aceite','recusado','convertido'],ov=overlayCard('Candidatos ('+rows.length+')','<div id="candList"></div>');const l=ov.querySelector('#candList');
   rows.forEach(c=>{const d=document.createElement('div');d.style.cssText='padding:8px 0;border-bottom:1px solid rgba(128,128,128,.25);font-size:12px';d.innerHTML='<b>'+escapeHTML(c.nome||'')+'</b> · '+escapeHTML(c.contacto||'')+'<br>Quarto '+escapeHTML(String(c.roomId||'—'))+' · entrada '+escapeHTML(c.entrada||'—')+' · '+escapeHTML(c.ocupacao||'')+'<br><i>'+escapeHTML((c.mensagem||'').slice(0,160))+'</i><br>';
     const sel=document.createElement('select');est.forEach(e=>{const o=document.createElement('option');o.textContent=e;if((c.estado||'novo')===e)o.selected=true;sel.appendChild(o);});sel.onchange=()=>F.db.collection('candidatos').doc(c.id).update({estado:sel.value});d.appendChild(sel);
+    if(c.estado!=='convertido'&&c.estado!=='recusado'){const b=document.createElement('button');b.type='button';b.className='inq-filter-btn';b.textContent='Criar inquilino';b.style.cssText='background:#22c55e;color:#0a0e17;font-weight:700;margin-left:6px';b.onclick=()=>acceptCandidate(c,ov,F);d.appendChild(b);}
     const w=document.createElement('button');w.type='button';w.className='inq-filter-btn';w.textContent='WhatsApp';w.onclick=()=>openWhatsAppToNumber(String(c.contacto||'').replace(/[^\d+]/g,''),'Olá '+(c.nome||'')+', obrigado pelo interesse no quarto '+(c.roomId||'')+'.');d.appendChild(w);
     const x=document.createElement('button');x.type='button';x.className='inq-filter-btn';x.textContent='Apagar';x.onclick=async()=>{if(await customConfirm('Apagar este candidato?','Apagar')){await F.db.collection('candidatos').doc(c.id).delete();d.remove();}};d.appendChild(x);l.appendChild(d);});
 }
